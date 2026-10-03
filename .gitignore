@@ -218,3 +218,21 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# sgd_gdmc project-specific
+# ---------------------------------------------------------------------------
+
+# Downloaded datasets (MNIST IDX files, CIFAR-10 pickles) are ~190 MB and
+# are re-downloaded automatically on first run by src/data/*.py.
+# NOTE: anchored to the repo root so it does NOT hide the source package
+# at src/data/.
+/data/
+
+# Matplotlib font cache (created with MPLCONFIGDIR=.mpl_cache)
+.mpl_cache/
+
+# Raw run logs / scratch output
+logs/
+*.log
+
