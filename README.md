@@ -65,5 +65,38 @@ Each experiment writes CSV results into `results/raw/` and PNG plots into
 .venv/bin/python analysis/aggregate.py
 ```
 
-See `plan.md` for the full experimental plan and `results/REPORT.md`
-(written by `analysis/aggregate.py`) for the final write-up.
+See `plan.md` for the full experimental plan, `results/REPORT.md`
+(written by `analysis/aggregate.py`) for the v1 final write-up,
+and `docs/v2_results.md` for the GDMC v2 update (momentum +
+multi-step moves).
+
+## GDMC v2 (momentum + multi-step)
+
+`GDMCOptimizer` accepts two new kwargs (both default to the v1
+behaviour, so v1 callers are bit-exactly unchanged):
+
+* `beta1` (default 0.0): first-moment momentum on the gradient,
+  Adam-style. The proposal direction becomes `-sign(m_t)`. Set to
+  `0.9` for v2.
+* `k` (default 1): number of grid points to step per move. Set to
+  `2`–`8` for v2.
+
+Empirical results on the toy regression sweep (see
+`docs/v2_results.md`):
+
+| bits | best v2 config | test loss (mean ± std) | v1 for reference | speedup |
+|------|----------------|------------------------|------------------|---------|
+| 3    | beta1=0.9, k=1 | 0.147 ± 0.029          | 0.398 ± 0.068    | 2.7×    |
+| 4    | beta1=0.9, k=1 | 0.101 ± 0.069          | 0.367 ± 0.197    | 3.6×    |
+| 8    | beta1=0.9, k=4 | 0.029 ± 0.025          | 0.099 ± 0.005    | 3.4×    |
+
+Recommended: use momentum (`beta1=0.9`) at 2-4 bits, momentum +
+multi-step (`beta1=0.9, k=4`) at 8 bits, and stick with v1 at 16+
+bits.
+
+Run the v2 sweep:
+
+```bash
+.venv/bin/python experiments/06_gdmc_v2_sweep.py
+```
+

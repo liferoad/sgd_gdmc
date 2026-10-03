@@ -44,15 +44,17 @@ class RunResult:
     momentum: float
     beta: float
     move_frac: float
-    extra: str  # JSON-encoded extra config (e.g. adaptive alpha)
-    final_train_loss: float
-    final_test_loss: float
-    final_test_acc: float
-    best_test_acc: float
-    best_test_loss: float
-    final_acceptance_rate: float
-    final_train_loss_steps: int
-    wall_time_sec: float
+    beta1: float = 0.0
+    k: int = 1
+    extra: str = ""  # JSON-encoded extra config (e.g. adaptive alpha)
+    final_train_loss: float = float("nan")
+    final_test_loss: float = float("nan")
+    final_test_acc: float = float("nan")
+    best_test_acc: float = float("nan")
+    best_test_loss: float = float("nan")
+    final_acceptance_rate: float = float("nan")
+    final_train_loss_steps: int = 0
+    wall_time_sec: float = float("nan")
     # Extra columns for sweeps:
     weight_mse_vs_continuous: float = float("nan")
 
@@ -75,7 +77,9 @@ def _build_optimizer(name, params, cfg, grid):
         from .gdmc import GDMCOptimizer
         return GDMCOptimizer(params, grid=grid,
                              beta=cfg.get("beta", 2.0),
-                             move_frac=cfg.get("move_frac", 0.01))
+                             move_frac=cfg.get("move_frac", 0.01),
+                             beta1=cfg.get("beta1", 0.0),
+                             k=cfg.get("k", 1))
     if name in ("gdmc-adaptive",):
         from .gdmc import GDMCOptimizer, AdaptiveGrid, make_grid
         # ``gdmc-adaptive`` historically meant a per-tensor-uniform grid
@@ -84,7 +88,9 @@ def _build_optimizer(name, params, cfg, grid):
         return GDMCOptimizer(params,
                              grid=make_grid("uniform-pt", bits=cfg.get("bits", 4)),
                              beta=cfg.get("beta", 2.0),
-                             move_frac=cfg.get("move_frac", 0.01))
+                             move_frac=cfg.get("move_frac", 0.01),
+                             beta1=cfg.get("beta1", 0.0),
+                             k=cfg.get("k", 1))
     raise ValueError(f"unknown optimizer: {name!r}")
 
 
@@ -128,6 +134,8 @@ def run_one(
     extra=None,
     eval_grid_spec=None,
     eval_bits=None,
+    beta1=0.0,
+    k=1,
 ):
     """Run a single (model, optimizer, grid, seed) configuration and return a result row.
 
@@ -136,13 +144,18 @@ def run_one(
     measure how well the trained weights transfer to low-bit
     deployment. If either is None, evaluation uses the training grid
     (or no snap if no grid was used at training time).
+
+    ``beta1`` and ``k`` are the GDMC v2 knobs (first-moment momentum
+    on the gradient and multi-step grid moves). They are ignored by
+    the other optimizers.
     """
     _set_seed(seed)
     model = model_fn()
     model.to(device)
     grid = _grid_for(grid_spec, bits) if grid_spec else None
     cfg = dict(lr=lr, momentum=momentum, beta=beta, move_frac=move_frac,
-               project_base=(extra or {}).get("project_base", "adam"))
+               project_base=(extra or {}).get("project_base", "adam"),
+               beta1=beta1, k=k)
     optimizer = _build_optimizer(optimizer_name, model.parameters(), cfg, grid)
 
     cfg_train = TrainConfig(epochs=epochs, log_every=log_every, device=device,
@@ -187,6 +200,8 @@ def run_one(
         momentum=momentum,
         beta=beta,
         move_frac=move_frac,
+        beta1=beta1,
+        k=k,
         extra=json.dumps(extra or {}),
         final_train_loss=float(final.loss) if not math.isnan(float(final.loss)) else float("nan"),
         final_test_loss=float(final.test_loss) if final.test_loss is not None else float("nan"),

@@ -99,14 +99,33 @@ class UniformGrid:
         ``sign`` is +1 / -1 (or 0, meaning no move). The result is the
         adjacent grid point, clipped to the grid range. We start from
         the snapped value so we always stay on the grid.
+
+        Equivalent to ``step(w, sign, k=1)``; kept for backwards
+        compatibility.
         """
+        return self.step(w, sign, k=1)
+
+    def step(self, w: torch.Tensor, sign: torch.Tensor, k: int = 1) -> torch.Tensor:
+        """Return the grid point ``k`` steps from ``w`` in direction ``sign``.
+
+        ``sign`` is +1 / -1 (or 0, meaning no move). The result is the
+        grid point that is ``k`` grid levels away in the sign direction,
+        clipped to the grid range. ``k`` must be a non-negative
+        integer; ``k=0`` returns the snapped value. ``k=1`` reproduces
+        the original ``neighbour`` behaviour.
+
+        The snap is done first, so the result is always on the grid
+        regardless of whether ``w`` is.
+        """
+        if k < 0:
+            raise ValueError("k must be >= 0")
         vmin, vmax = self._range(w)
         snapped = self.snap(w)
-        if self.levels == 1:
+        if self.levels == 1 or k == 0:
             return snapped
         delta = (vmax - vmin) / (self.levels - 1)
         idx = torch.round((snapped - vmin) / delta)
-        idx = (idx + sign.to(idx.dtype)).clamp(0, self.levels - 1)
+        idx = (idx + k * sign.to(idx.dtype)).clamp(0, self.levels - 1)
         return vmin + idx * delta
 
     def values(self, w: torch.Tensor) -> torch.Tensor:
@@ -169,12 +188,28 @@ class AdaptiveGrid:
 
     def neighbour_with_range(self, w: torch.Tensor, sign: torch.Tensor,
                              vmin: float, vmax: float) -> torch.Tensor:
-        if self.levels == 1:
+        return self.step_with_range(w, sign, k=1, vmin=vmin, vmax=vmax)
+
+    def step_with_range(self, w: torch.Tensor, sign: torch.Tensor,
+                        k: int = 1, vmin: float | None = None,
+                        vmax: float | None = None) -> torch.Tensor:
+        """Like :meth:`step` but with an explicit grid range.
+
+        This is the version used by the optimizer (which captures the
+        range from the *full* tensor up front).  ``k`` must be a
+        non-negative integer; ``k=1`` reproduces the original
+        ``neighbour_with_range`` behaviour.
+        """
+        if k < 0:
+            raise ValueError("k must be >= 0")
+        if vmin is None or vmax is None:
+            vmin, vmax = self._range(w)
+        if self.levels == 1 or k == 0:
             return self.snap_with_range(w, vmin, vmax)
         snapped = self.snap_with_range(w, vmin, vmax)
         delta = (vmax - vmin) / (self.levels - 1)
         idx = torch.round((snapped - vmin) / delta)
-        idx = (idx + sign.to(idx.dtype)).clamp(0, self.levels - 1)
+        idx = (idx + k * sign.to(idx.dtype)).clamp(0, self.levels - 1)
         return vmin + idx * delta
 
     # Backwards-compatible (auto-range) methods, used when the caller

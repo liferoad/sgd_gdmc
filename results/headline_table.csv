@@ -67,3 +67,9 @@ toy_regression,mlp_64x64,projected-gd,uniform,16,0.0,0.0,3,0.0,0.0,0.0000 ± 0.0
 toy_regression,mlp_64x64,projected-gd,uniform,32,0.0,0.0,3,0.0,0.0,0.0000 ± 0.0000
 toy_regression,mlp_64x64,sgd,none,32,0.0,0.0,3,0.0,0.0,0.0000 ± 0.0000
 toy_regression,mlp_64x64,sgld,none,32,0.0,0.0,3,0.0,0.0,0.0000 ± 0.0000
+toy_regression_v2,mlp_64x64,gdmc,uniform,2,0.0,0.0,18,0.0,0.0,0.0000 ± 0.0000
+toy_regression_v2,mlp_64x64,gdmc,uniform,3,0.0,0.0,18,0.0,0.0,0.0000 ± 0.0000
+toy_regression_v2,mlp_64x64,gdmc,uniform,4,0.0,0.0,18,0.0,0.0,0.0000 ± 0.0000
+toy_regression_v2,mlp_64x64,gdmc,uniform,8,0.0,0.0,18,0.0,0.0,0.0000 ± 0.0000
+toy_regression_v2,mlp_64x64,gdmc,uniform,16,0.0,0.0,18,0.0,0.0,0.0000 ± 0.0000
+toy_regression_v2,mlp_64x64,gdmc,uniform,32,0.0,0.0,18,0.0,0.0,0.0000 ± 0.0000

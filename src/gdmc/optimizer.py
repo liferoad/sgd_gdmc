@@ -81,6 +81,17 @@ class GDMCOptimizer(torch.optim.Optimizer):
         uses the *full* training set (expensive but unbiased). For
         DL we default to "minibatch" — the noise acts as an implicit
         regularizer and matches SGLD's behaviour.
+    beta1 : float, default 0.0
+        First-moment momentum on the gradient, à la Adam. ``0.0``
+        (the default) means no momentum — the proposal direction is
+        ``-sign(g)`` and the optimizer is bit-exactly equivalent to
+        v1. Set to e.g. ``0.9`` to use ``m_t = beta1 * m_{t-1} + (1 - beta1) * g_t``
+        and propose moves in ``-sign(m_t)``.
+    k : int, default 1
+        Number of *grid points* to step per move (the original
+        behaviour). ``k > 1`` takes larger discrete steps in the
+        descent direction, which is needed at fine grids where one
+        step is too small to make progress in a short training run.
     rng : torch.Generator, optional
         Random source for the move-set selection. Default uses the
         global generator.
@@ -95,16 +106,24 @@ class GDMCOptimizer(torch.optim.Optimizer):
         beta: float = 2.0,
         move_frac: float = 0.01,
         accept_on: str = "minibatch",
+        beta1: float = 0.0,
+        k: int = 1,
         rng: Optional[torch.Generator] = None,
     ) -> None:
         if grid is None:
             grid = make_grid(grid_spec, bits=bits)
+        if k < 1:
+            raise ValueError("k must be >= 1")
+        if not 0.0 <= beta1 < 1.0:
+            raise ValueError("beta1 must be in [0, 1)")
         # Normalize to a list of grids, one per param group.
         defaults = dict(
             grid=grid,
             beta=beta,
             move_frac=move_frac,
             accept_on=accept_on,
+            beta1=beta1,
+            k=k,
         )
         super().__init__(params, defaults)
         self.rng = rng
@@ -130,8 +149,14 @@ class GDMCOptimizer(torch.optim.Optimizer):
         return torch.randperm(numel, generator=self.rng, device="cpu")[:n]
 
     def _make_step(self, p: torch.Tensor, g: torch.Tensor, grid: GridLike,
-                   move_frac: float) -> torch.Tensor:
-        """Return a candidate update to ``p`` of the same shape."""
+                   move_frac: float, beta1: float = 0.0, k: int = 1) -> torch.Tensor:
+        """Return a candidate update to ``p`` of the same shape.
+
+        ``beta1`` and ``k`` default to the v1 behaviour (no momentum,
+        one grid step). When ``beta1 > 0`` the first-moment buffer is
+        read and updated *in place*; when ``k > 1`` the proposal is
+        ``k`` grid points in the descent direction.
+        """
         if move_frac <= 0.0 or p.numel() == 0:
             return torch.zeros_like(p)
         # Capture the grid range from the FULL tensor. This is critical
@@ -142,17 +167,32 @@ class GDMCOptimizer(torch.optim.Optimizer):
             vmin, vmax = grid.range_for(p.data)
             snap_fn = grid.snap_with_range
             neigh_fn = grid.neighbour_with_range
+            step_fn = grid.step_with_range
         else:
             vmin = vmax = None
             snap_fn = grid.snap
             neigh_fn = grid.neighbour
+            step_fn = grid.step
         # Snap current weights so the move set is defined on the grid.
         if vmin is not None:
             snapped = snap_fn(p.data, vmin, vmax)
         else:
             snapped = snap_fn(p.data)
-        # Sign of gradient: -1 for descent.
-        sign = -torch.sign(g).to(p.dtype)
+        # First-moment momentum (Adam-style).  When beta1 == 0 we skip
+        # the state lookup entirely to keep the v1 code path free.
+        if beta1 > 0.0:
+            state = self.state[p]
+            m = state.get("m")
+            if m is None:
+                m = torch.zeros_like(p.data)
+                state["m"] = m
+            # m_t = beta1 * m_{t-1} + (1 - beta1) * g_t
+            m.mul_(beta1).add_(g, alpha=1.0 - beta1)
+            descent_dir = m
+        else:
+            descent_dir = g
+        # Sign of the descent direction: -1 for descent.
+        sign = -torch.sign(descent_dir).to(p.dtype)
         # Pick the move-set indices (in this tensor's flat space).
         idx = self._select_indices(p.numel(), move_frac)
         flat_p = snapped.view(-1)
@@ -166,9 +206,9 @@ class GDMCOptimizer(torch.optim.Optimizer):
         sub_w = flat_p[mask]
         sub_s = flat_sign[mask]
         if vmin is not None:
-            sub_new = neigh_fn(sub_w, sub_s, vmin, vmax)
+            sub_new = step_fn(sub_w, sub_s, k=k, vmin=vmin, vmax=vmax)
         else:
-            sub_new = neigh_fn(sub_w, sub_s)
+            sub_new = step_fn(sub_w, sub_s, k=k)
         flat_cand[mask] = sub_new
         return (candidate - snapped).detach()
 
@@ -228,11 +268,14 @@ class GDMCOptimizer(torch.optim.Optimizer):
             grid = group["grid"]
             beta = group["beta"]
             move_frac = group["move_frac"]
+            beta1 = group["beta1"]
+            k = group["k"]
             for p in group["params"]:
                 if p.grad is None:
                     continue
                 snap = self._snap(p, grid).clone()
-                delta = self._make_step(p, p.grad, grid, move_frac)
+                delta = self._make_step(p, p.grad, grid, move_frac,
+                                        beta1=beta1, k=k)
                 snapshots.append(snap)
                 deltas.append(delta)
                 params.append(p)
