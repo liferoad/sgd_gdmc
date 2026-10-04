@@ -14,22 +14,27 @@ end.
 ## Bottom line up front
 
 > **⚠️ Updated by the long runs.** The tables below come from the
-> *short* sweep (2-3 epochs on MNIST/CIFAR). Long-horizon re-runs
-> materially change the picture on **both** models:
+> *short* sweep (2-3 epochs on MNIST/CIFAR). Long-horizon re-runs on
+> all three models:
 >
 > | model | long run | Adam (32-bit) | GDMC v2 @ 8-bit | GDMC v2 @ 4-bit | Projected-GD @ 4-bit |
 > |---|---|---|---|---|---|
 > | MNIST MLP | 30 epochs, 60K train | 0.9757 | **0.9775** | 0.9460 | 0.2180 |
 > | MNIST CNN | 8 epochs, 10K train  | 0.9546 | **0.9668** | 0.7807 | 0.1503 |
+> | CIFAR-10 CNN | 20 epochs, 10K train | 0.5747 | 0.5682 | 0.5538 | 0.1217 |
 >
 > **GDMC v2 with momentum matches or beats continuous Adam at 8-bit on
-> both models**, and at 4-bit it is **4.3-5.1× better than
-> Projected-GD**. The 8-bit "GDMC loses to Projected-GD" row in the
-> tally below was an artifact of the short epoch budget (GDMC 8-bit on
-> MNIST MLP gains +0.186 from 3→30 epochs, the largest of any config).
-> See [`docs/long_runs.md`](long_runs.md) for the full analysis,
-> `results/raw/long_runs_mlp.csv` (117 runs) and
-> `results/raw/long_runs_cnn_focused.csv` (21 runs) for the data.
+> MNIST MLP and CNN**, and is **4.3-5.1× better than Projected-GD at
+> 4-bit on all three models**. On CIFAR-10 at 8-bit the order
+> inverts (Projected-GD 0.6067 > Adam 0.5747 > GDMC v2 0.5682), but
+> GDMC v2 still beats Projected-GD at 4-bit on CIFAR by 4.55×. The
+> 8-bit "GDMC loses to Projected-GD" row in the tally below was an
+> artifact of the short epoch budget (GDMC 8-bit on MNIST MLP gains
+> +0.186 from 3→30 epochs, the largest of any config). See
+> [`docs/long_runs.md`](long_runs.md) for the full analysis,
+> `results/raw/long_runs_mlp.csv` (117 runs),
+> `results/raw/long_runs_cnn_focused.csv` (21 runs), and
+> `results/raw/long_runs_cifar_focused.csv` (24 runs) for the data.
 
 **Each optimizer wins a different regime; "Adam is the best" is true at
 32 bits and false at ≤4 bits.** Across 22 (task, bits) cells (4 tasks

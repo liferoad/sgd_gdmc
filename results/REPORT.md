@@ -19,6 +19,22 @@ There is no universal-best optimizer; the right choice depends on the bit-width 
 
 **GDMC v2 at 8-bit matches/beats continuous Adam** (0.9775 vs 0.9757), and at 4-bit it is 3.0 points behind Adam while being 4.3× better than the QAT-style Projected-GD baseline. The short sweep below used only 2-3 epochs and understates GDMC substantially (GDMC 8-bit gains +0.186 from 3→30 epochs, the largest of any config). Full long-run analysis in `docs/long_runs.md`; per-cell best-optimizer tally in `docs/test_report.md` §3.7; v2 sweep in `docs/v2_results.md`.
 
+
+## Top-line conclusion from the long runs (see `docs/long_runs.md` for the full analysis)
+
+The same 3-model × (Adam 32-bit / GDMC v2 8-bit / GDMC v2 4-bit / Projected-GD 4-bit) table, now at a proper training horizon:
+
+| model | long run | Adam (32-bit) | GDMC v2 @ 8-bit | GDMC v2 @ 4-bit | Projected-GD @ 4-bit |
+
+|---|---|---|---|---|---|
+| MNIST MLP | 30 epochs, 60K train | 0.9757 | **0.9775** | 0.9460 | 0.2180 |
+
+| MNIST CNN | 8 epochs, 10K train  | 0.9546 | **0.9668** | 0.7807 | 0.1503 |
+
+| CIFAR-10 CNN | 20 epochs, 10K train | 0.5747 | 0.5682 | 0.5538 | 0.1217 |
+
+GDMC v2 with momentum matches or beats continuous Adam at 8-bit on MNIST MLP and CNN, and is **4.3-5.1× better than Projected-GD at 4-bit on all three models**. On CIFAR-10 at 8-bit the order inverts (Projected-GD 0.6067 > Adam 0.5747 > GDMC v2 0.5682), but GDMC v2 still beats Projected-GD at 4-bit on CIFAR by 4.55×.
+
 ## Headline table — best metric by (task, optimizer, bits)
 
 *(short sweep only; long-run tasks are excluded and reported in `docs/long_runs.md`)*
@@ -38,6 +54,18 @@ There is no universal-best optimizer; the right choice depends on the bit-width 
 | cifar10_cnn | smallcnn_b16 | projected-gd  | uniform     |      8 | 0.2727 ± 0.0302 | 0.2509 | 0.3071 |       3 |
 | cifar10_cnn | smallcnn_b16 | sgd           | none        |     32 | 0.2206 ± 0.0042 | 0.2167 | 0.2250 |       3 |
 | cifar10_cnn | smallcnn_b16 | sgld          | none        |     32 | 0.1091 ± 0.0027 | 0.1060 | 0.1112 |       3 |
+
+
+### cifar10_cnn_long  (metric: best_test_acc)
+
+| task             | model        | optimizer    | grid_spec   |   bits | mean_std (test_acc)        |    min |    max |   count |
+|:-----------------|:-------------|:-------------|:------------|-------:|:----------------|-------:|-------:|--------:|
+| cifar10_cnn_long | smallcnn_b16 | adam         | none        |     32 | 0.5747 ± 0.0407 | 0.5278 | 0.6008 |       3 |
+| cifar10_cnn_long | smallcnn_b16 | gdmc         | uniform     |      4 | 0.4367 ± 0.1408 | 0.2253 | 0.5798 |       6 |
+| cifar10_cnn_long | smallcnn_b16 | gdmc         | uniform     |      8 | 0.5249 ± 0.0496 | 0.4627 | 0.5823 |       6 |
+| cifar10_cnn_long | smallcnn_b16 | momentum     | none        |     32 | 0.3486 ± 0.0943 | 0.2929 | 0.4575 |       3 |
+| cifar10_cnn_long | smallcnn_b16 | projected-gd | uniform     |      4 | 0.1217 ± 0.0167 | 0.1030 | 0.1350 |       3 |
+| cifar10_cnn_long | smallcnn_b16 | projected-gd | uniform     |      8 | 0.6067 ± 0.0397 | 0.5788 | 0.6521 |       3 |
 
 
 ### mnist_cnn  (metric: best_test_acc)

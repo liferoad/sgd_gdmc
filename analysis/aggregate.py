@@ -152,6 +152,23 @@ def write_report(df, out_path):
     lines.append("| projected-gd | 4 | 0.2180 ± 0.0763 |")
     lines.append("")
     lines.append("**GDMC v2 at 8-bit matches/beats continuous Adam** (0.9775 vs 0.9757), and at 4-bit it is 3.0 points behind Adam while being 4.3× better than the QAT-style Projected-GD baseline. The short sweep below used only 2-3 epochs and understates GDMC substantially (GDMC 8-bit gains +0.186 from 3→30 epochs, the largest of any config). Full long-run analysis in `docs/long_runs.md`; per-cell best-optimizer tally in `docs/test_report.md` §3.7; v2 sweep in `docs/v2_results.md`.\n")
+
+    # Long-run table (so the auto-generated report also surfaces the
+    # long-run conclusion).
+    long_run_table = [
+        ("", ""),
+        ("## Top-line conclusion from the long runs (see `docs/long_runs.md` for the full analysis)\n", ""),
+        ("The same 3-model × (Adam 32-bit / GDMC v2 8-bit / GDMC v2 4-bit / Projected-GD 4-bit) table, now at a proper training horizon:\n", ""),
+        ("| model | long run | Adam (32-bit) | GDMC v2 @ 8-bit | GDMC v2 @ 4-bit | Projected-GD @ 4-bit |\n", ""),
+        ("|---|---|---|---|---|---|", ""),
+        ("| MNIST MLP | 30 epochs, 60K train | 0.9757 | **0.9775** | 0.9460 | 0.2180 |\n", ""),
+        ("| MNIST CNN | 8 epochs, 10K train  | 0.9546 | **0.9668** | 0.7807 | 0.1503 |\n", ""),
+        ("| CIFAR-10 CNN | 20 epochs, 10K train | 0.5747 | 0.5682 | 0.5538 | 0.1217 |\n", ""),
+        ("GDMC v2 with momentum matches or beats continuous Adam at 8-bit on MNIST MLP and CNN, and is **4.3-5.1× better than Projected-GD at 4-bit on all three models**. On CIFAR-10 at 8-bit the order inverts (Projected-GD 0.6067 > Adam 0.5747 > GDMC v2 0.5682), but GDMC v2 still beats Projected-GD at 4-bit on CIFAR by 4.55×.\n", ""),
+    ]
+    for line, _ in long_run_table:
+        lines.append(line)
+
     lines.append("## Headline table — best metric by (task, optimizer, bits)\n")
     lines.append("*(short sweep only; long-run tasks are excluded and reported in `docs/long_runs.md`)*\n")
     for task in sorted(df["task"].unique()):

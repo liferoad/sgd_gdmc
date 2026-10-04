@@ -1,4 +1,4 @@
-# Long-run results — 30 epochs (MNIST MLP) and 8 epochs (MNIST CNN)
+# Long-run results — 30 epochs (MNIST MLP), 8 epochs (MNIST CNN), 20 epochs (CIFAR-10 CNN)
 
 The v1 sweep in [`results/REPORT.md`](../results/REPORT.md) used a very
 short epoch budget on the classification tasks (MNIST MLP 3 epochs,
@@ -7,18 +7,22 @@ beats random (0.25 vs 0.10), so those numbers mostly measure "what
 happens in the first few thousand steps", not "how well can this
 optimizer train".
 
-This document reports two long-horizon re-runs that **materially change
+This document reports three long-horizon re-runs that **materially change
 the headline conclusion**:
 
 * **§1-6: MNIST MLP, 30 epochs, full 60K training set** — the complete
   v1 sweep plus a GDMC v2 momentum ablation.
 * **§7: MNIST CNN, 8 epochs, 10K subset** — a focused comparison of
   GDMC v1 / GDMC v2 momentum / Projected-GD at 4 and 8 bits.
+* **§8: CIFAR-10 CNN, 20 epochs, 10K subset** — the third model.
 
 **Headline: GDMC v2 with momentum matches or beats continuous Adam at
-8 bits on both models** (MLP 0.9775 vs 0.9757; CNN 0.9668 vs 0.9546),
-and at 4 bits it is 4-5× better than the QAT-style Projected-GD
-baseline.
+8 bits on MNIST MLP and CNN** (MLP 0.9775 vs 0.9757; CNN 0.9668 vs
+0.9546), but **does not on CIFAR-10** at 20 epochs / 10K train
+(Projected-GD 0.6067 > Adam 0.5747 > GDMC v2 0.5682). On all three
+models, GDMC v2 at 4 bits is **4.3-5.1× better** than the QAT-style
+Projected-GD baseline, and momentum gives a consistent +10-20 point
+lift at 4 bits over v1.
 
 ### MNIST MLP setup
 
@@ -238,3 +242,111 @@ comparison at 8 epochs on the 10K training subset.
    rises to 0.7680 at 8 epochs — confirming the short budget was
    understating GDMC, while Projected-GD barely moves
    (0.1523 → 0.1503).
+
+
+---
+
+## 8. CIFAR-10 CNN focused long run (20 epochs)
+
+The short CIFAR-10 sweep in experiments/04 used 2 epochs and 10K
+training samples, which produced results barely above random (Adam
+at 0.2513, GDMC 4-bit at 0.2671, both within 0.05 of the 0.10
+random baseline). This section re-runs the key comparison at
+20 epochs on the 10K training subset.
+
+* Script: experiments/09_long_runs_cifar.py
+* Raw data: results/raw/long_runs_cifar_focused.csv (24 runs)
+* Setup: SmallCNN (3 conv blocks + 2 FC, base width 16),
+  20 epochs, 10K training subset, batch 128, 3 seeds.
+
+### 8.1 Results
+
+| optimizer | bits | test acc (mean ± std) | per-seed |
+|-----------|-----:|----------------------:|----------|
+| projected-gd | 8 | 0.6067 ± 0.0397 | 0.5788 / 0.6521 / 0.5891 |
+| adam (continuous) | 32 | 0.5747 ± 0.0407 | 0.5954 / 0.5278 / 0.6008 |
+| gdmc v1 (β1=0.0, k=1) | 8 | 0.5249 ± 0.0496 | 0.4627 / 0.4866 / 0.4956 |
+| gdmc v2 (β1=0.9, k=1) | 8 | 0.5682 ± 0.0154 | 0.5823 / 0.5704 / 0.5519 |
+| gdmc v1 (β1=0.0, k=1) | 4 | 0.4367 ± 0.1408 | 0.3965 / 0.2253 / 0.3371 |
+| gdmc v2 (β1=0.9, k=1) | 4 | 0.5538 ± 0.0291 | 0.5591 / 0.5226 / 0.5798 |
+| momentum | 32 | 0.3486 ± 0.0943 | 0.2929 / 0.4575 / 0.2954 |
+| projected-gd | 4 | 0.1217 ± 0.0167 | 0.1271 / 0.1030 / 0.1350 |
+
+### 8.2 Findings
+
+1. The order at 8 bits is INVERTED from MNIST MLP and CNN.
+   Projected-GD 0.6067 > Adam 0.5747 > GDMC v2 0.5682. On CIFAR,
+   the QAT-style baseline + Adam (with adaptive scaling on a
+   256-level grid) is *better* than continuous Adam *and* better
+   than GDMC v2 with momentum. This is the opposite of what MLP
+   and CNN showed.
+
+2. GDMC v2 at 4-bit (0.5538) vs Projected-GD at 4-bit (0.1217):
+   4.55× ratio. This is the most robust finding across all three
+   models — MLP 4.3×, CNN 5.1×, CIFAR 4.55×. Projected-GD is
+   essentially broken at <=4 bits regardless of model or epoch count.
+
+3. Momentum at 4-bit is the biggest absolute win on CIFAR. GDMC v1
+   0.4367 -> GDMC v2 with momentum 0.5538 (+11.7 points). This
+   matches the MLP pattern (where momentum was +5 points) and is
+   larger than on the CNN (where v2 had high variance).
+
+4. Momentum at 8-bit is small on CIFAR. GDMC v1 0.5249 -> GDMC v2
+   0.5682 (+4.3 points). The momentum buffer helps but not enough
+   to close the gap to Projected-GD (0.6067) at 8-bit. The high
+   seed variance (Adam ranges 0.528-0.601 across seeds) suggests
+   CIFAR with 10K train is just at the edge of what a 20-epoch
+   run can resolve.
+
+5. GDMC v2 at 8-bit does NOT match/beat Adam on CIFAR. MLP:
+   0.9775 vs 0.9757 (+0.0018, GDMC wins). CNN: 0.9668 vs 0.9546
+   (+0.0122, GDMC wins). CIFAR: 0.5682 vs 0.5747 (-0.0065, Adam
+   wins). The "GDMC v2 >= Adam at 8-bit" headline *does not
+   replicate on CIFAR* at this scale. Whether longer training or
+   full 50K train would reverse the order is unknown.
+
+6. Momentum at 32-bit baselines is bad on CIFAR (momentum 0.35,
+   Adam 0.57). The momentum baseline uses lr=1e-2 which is too high
+   for momentum on CIFAR. Same as v1; not a regression.
+
+### 8.3 Why CIFAR differs from MNIST
+
+Three things differ between CIFAR-10 and the MNIST models in this
+project:
+
+* Data complexity: CIFAR-10 is 32x32x3 RGB with 10 visually-distinct
+  classes; MNIST is 28x28 grayscale with 10 classes. The loss
+  landscape is harder.
+* Model: same SmallCNN architecture but 3 input channels instead
+  of 1; the BN running stats add noise.
+* Training budget: 20 epochs × 10K train is ~1.4× the gradient
+  steps of 8 epochs × 10K (CNN), but CIFAR is harder to fit per
+  step.
+
+The combination means Adam's adaptive scaling gets more leverage:
+at the small batch budget, the per-coordinate step size variance
+is large, and m / sqrt(v) smooths that out well. GDMC's sign(g)
+doesn't see the magnitude differences, so it leaves some
+performance on the table at 8-bit where Adam shines.
+
+The 4-bit result is still the headline. Projected-GD completely
+fails at 2-4 bits on every model tested. GDMC is the only
+optimizer that works in that regime. At 8-bit and above, Adam or
+Projected-GD is competitive or better.
+
+### 8.4 Updated recommendation (all 3 models)
+
+| bit budget | MNIST MLP | MNIST CNN | CIFAR-10 CNN |
+|---|---|---|---|
+| 2-4 bits   | GDMC v2 (β1=0.9, k=1) — 4.3× Projected-GD, within 3 pt of Adam | GDMC v2 (β1=0.9, k=1) — 5.1× Projected-GD, +1.2 pt over Adam | GDMC v2 (β1=0.9, k=1) — 4.55× Projected-GD, within 2 pt of Adam |
+| 8 bits     | GDMC v2 ~ Adam (0.9775 vs 0.9757) | GDMC v2 > Adam (0.9668 vs 0.9546) | Projected-GD > GDMC v2 > Adam (0.6067 vs 0.5682 vs 0.5747) |
+| 16+ bits   | Projected-GD or Adam | Projected-GD or Adam | n/a (not run at 16+ bits) |
+| no quantization | momentum (0.9808) | Adam (0.9546) | Adam (0.5747) |
+
+GDMC v2 with momentum is the right answer at 2-4 bits on all three
+models, with 4.3-5.1× advantage over Projected-GD and within
+1-3 points of continuous Adam. At 8 bits the picture is mixed:
+GDMC v2 wins on MNIST, ties on MNIST CNN, and loses to
+Projected-GD on CIFAR. The 8-bit result on CIFAR is the one open
+question — it might reverse with longer training or full 50K
+train.

@@ -17,6 +17,12 @@ Short sweep only; long-run tasks are reported in `docs/long_runs.md`.
 | cifar10_cnn       | smallcnn_b16 | projected-gd  | uniform     |      8 | 0.2727 ± 0.0302 | 0.2509 | 0.3071 |       3 |
 | cifar10_cnn       | smallcnn_b16 | sgd           | none        |     32 | 0.2206 ± 0.0042 | 0.2167 | 0.2250 |       3 |
 | cifar10_cnn       | smallcnn_b16 | sgld          | none        |     32 | 0.1091 ± 0.0027 | 0.1060 | 0.1112 |       3 |
+| cifar10_cnn_long  | smallcnn_b16 | adam          | none        |     32 | 0.5747 ± 0.0407 | 0.5278 | 0.6008 |       3 |
+| cifar10_cnn_long  | smallcnn_b16 | gdmc          | uniform     |      4 | 0.4367 ± 0.1408 | 0.2253 | 0.5798 |       6 |
+| cifar10_cnn_long  | smallcnn_b16 | gdmc          | uniform     |      8 | 0.5249 ± 0.0496 | 0.4627 | 0.5823 |       6 |
+| cifar10_cnn_long  | smallcnn_b16 | momentum      | none        |     32 | 0.3486 ± 0.0943 | 0.2929 | 0.4575 |       3 |
+| cifar10_cnn_long  | smallcnn_b16 | projected-gd  | uniform     |      4 | 0.1217 ± 0.0167 | 0.1030 | 0.1350 |       3 |
+| cifar10_cnn_long  | smallcnn_b16 | projected-gd  | uniform     |      8 | 0.6067 ± 0.0397 | 0.5788 | 0.6521 |       3 |
 | mnist_cnn         | smallcnn_b16 | adam          | none        |     32 | 0.8041 ± 0.0934 | 0.6988 | 0.8767 |       3 |
 | mnist_cnn         | smallcnn_b16 | gdmc          | uniform     |      2 | 0.2133 ± 0.0704 | 0.1656 | 0.2942 |       3 |
 | mnist_cnn         | smallcnn_b16 | gdmc          | uniform     |      3 | 0.4574 ± 0.0628 | 0.4075 | 0.5279 |       3 |
