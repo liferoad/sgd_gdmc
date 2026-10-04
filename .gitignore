@@ -237,9 +237,10 @@ logs/
 *.log
 
 # Per-step training curves written by run_one(curves_dir=...).  These are
-# derived data: one CSV per run, ~0.5 MB each (tens of MB in total).
-# Regenerate with experiments/07..11, then plot with
+# derived data: one CSV per run, ~0.5 MB each (124 MB in total).
+# Regenerate with experiments/07..15, then plot with
 # analysis/plot_curves.py.  The derived figures ARE committed under
-# results/plots/.
+# results/plots/, and compressed snapshots of the raw curves are committed
+# under results/curves_archive/ (see its README).
 /results/curves/
 

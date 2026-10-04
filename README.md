@@ -158,3 +158,15 @@ runner, and the aggregator.
 
 Known artifacts in results produced before 2026-10-04, and the corrected
 numbers, are documented in docs/fixes_2026-10-04.md.
+
+## Results layout
+
+* results/raw/*.csv - one row per run (all experiment data);
+* results/headline_table.{md,csv}, results/REPORT.md - generated tables;
+* results/lowbit_summary.{md,csv}, results/lowbit_paired.csv - paired
+  low-bit analysis; results/lowbit_settings_*.json - the validation-selected
+  settings;
+* results/plots/*.png - figures;
+* results/curves_archive/*.tar.gz - compressed snapshots of the per-step
+  training curves (the live results/curves/ directory is derived and
+  gitignored; see the archive README for how to restore).
