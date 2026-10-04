@@ -108,6 +108,11 @@ Run the v2 sweep:
 
 # Gradient-noise study (validation quality vs proposal-gradient noise)
 .venv/bin/python experiments/14_noise_study.py
+
+# Same-precision low-bit comparison: basic GDMC, momentum GDMC, projected
+# Adam/momentum SGD, latent-weight QAT (STE) and FP32 Adam, at 2/4/8 bits
+# with a matched validation-based tuning budget
+.venv/bin/python experiments/15_lowbit_comparison.py
 ```
 
 ## Tests
@@ -140,7 +145,10 @@ runner, and the aggregator.
 * ProjectedGD(lr_scale=s) sets lr = s * grid spacing, so the baseline can no
   longer be frozen by lr < delta.
 * New baselines: adam8bit (block-wise 8-bit optimizer state) and signsgd
-  (momentum signSGD).
+  (momentum signSGD). adam8bit compresses optimizer state only: its weights
+  stay FP32, so it is a memory reference, not a same-precision comparator.
+* src/models/quant.py: latent-weight QAT with a straight-through estimator,
+  used as the practical low-precision baseline in experiment 15.
 * RunResult now records delta_loss, num_moved, mean_acceptance_rate,
   peak_rss_mb and rss_growth_mb; final_train_loss is populated.
 
