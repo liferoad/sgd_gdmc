@@ -149,6 +149,10 @@ runner, and the aggregator.
   stay FP32, so it is a memory reference, not a same-precision comparator.
 * src/models/quant.py: latent-weight QAT with a straight-through estimator,
   used as the practical low-precision baseline in experiment 15.
+* analysis/lowbit_analysis.py: paired analysis of the low-bit comparison
+  (best-of-run and final accuracy, paired t-test and Wilcoxon) plus the
+  learning-curve figures. The goal-by-goal answer is in
+  docs/research_goals.md.
 * RunResult now records delta_loss, num_moved, mean_acceptance_rate,
   peak_rss_mb and rss_growth_mb; final_train_loss is populated.
 

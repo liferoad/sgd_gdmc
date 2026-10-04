@@ -1,0 +1,38 @@
+{
+ "gdmc-v1|2": {
+  "beta": 2.0
+ },
+ "gdmc-v1|4": {
+  "beta": 4.0
+ },
+ "gdmc-v1|8": {
+  "beta": 1.0
+ },
+ "gdmc-v2|2": {
+  "beta": 2.0
+ },
+ "gdmc-v2|4": {
+  "beta": 1.0
+ },
+ "gdmc-v2|8": {
+  "beta": 1.0
+ },
+ "projected-adam|2": {
+  "project_lr_scale": 0.5
+ },
+ "projected-adam|4": {
+  "project_lr_scale": 0.5
+ },
+ "projected-adam|8": {
+  "project_lr_scale": 1.0
+ },
+ "projected-msgd|2": {
+  "project_lr_scale": 0.25
+ },
+ "projected-msgd|4": {
+  "project_lr_scale": 1.0
+ },
+ "projected-msgd|8": {
+  "project_lr_scale": 1.0
+ }
+}
