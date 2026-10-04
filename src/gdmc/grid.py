@@ -83,9 +83,20 @@ class UniformGrid:
             return (self.vmin * m, self.vmax * m)
         return (self.vmin, self.vmax)
 
+    def range_for(self, w: torch.Tensor):
+        """Public range accessor, so the optimizer can capture the range
+        from the FULL tensor before operating on a subset (this is what
+        matters for per_tensor grids)."""
+        return self._range(w)
+
     def snap(self, w: torch.Tensor) -> torch.Tensor:
         """Round-to-nearest grid point, clamped to the grid range."""
         vmin, vmax = self._range(w)
+        return self.snap_with_range(w, vmin, vmax)
+
+    def snap_with_range(self, w: torch.Tensor, vmin: float,
+                        vmax: float) -> torch.Tensor:
+        """Snap using an explicit range (see range_for)."""
         if self.levels == 1:
             return torch.full_like(w, 0.5 * (vmin + vmax))
         delta = (vmax - vmin) / (self.levels - 1)
@@ -94,33 +105,26 @@ class UniformGrid:
         return vmin + idx * delta
 
     def neighbour(self, w: torch.Tensor, sign: torch.Tensor) -> torch.Tensor:
-        """Return the grid point one step from ``w`` in direction ``sign``.
+        """Return the grid point one step from w in direction sign.
 
-        ``sign`` is +1 / -1 (or 0, meaning no move). The result is the
-        adjacent grid point, clipped to the grid range. We start from
-        the snapped value so we always stay on the grid.
-
-        Equivalent to ``step(w, sign, k=1)``; kept for backwards
-        compatibility.
+        Equivalent to step(w, sign, k=1); kept for backwards compatibility.
         """
         return self.step(w, sign, k=1)
 
     def step(self, w: torch.Tensor, sign: torch.Tensor, k: int = 1) -> torch.Tensor:
-        """Return the grid point ``k`` steps from ``w`` in direction ``sign``.
+        """Return the grid point k steps from w in direction sign."""
+        vmin, vmax = self._range(w)
+        return self.step_with_range(w, sign, k=k, vmin=vmin, vmax=vmax)
 
-        ``sign`` is +1 / -1 (or 0, meaning no move). The result is the
-        grid point that is ``k`` grid levels away in the sign direction,
-        clipped to the grid range. ``k`` must be a non-negative
-        integer; ``k=0`` returns the snapped value. ``k=1`` reproduces
-        the original ``neighbour`` behaviour.
-
-        The snap is done first, so the result is always on the grid
-        regardless of whether ``w`` is.
-        """
+    def step_with_range(self, w: torch.Tensor, sign: torch.Tensor, k: int = 1,
+                        vmin: float | None = None,
+                        vmax: float | None = None) -> torch.Tensor:
+        """Like step but with an explicit grid range."""
         if k < 0:
             raise ValueError("k must be >= 0")
-        vmin, vmax = self._range(w)
-        snapped = self.snap(w)
+        if vmin is None or vmax is None:
+            vmin, vmax = self._range(w)
+        snapped = self.snap_with_range(w, vmin, vmax)
         if self.levels == 1 or k == 0:
             return snapped
         delta = (vmax - vmin) / (self.levels - 1)
@@ -130,14 +134,15 @@ class UniformGrid:
 
     def step_multi(self, w: torch.Tensor, sign: torch.Tensor,
                    k_vec: torch.Tensor) -> torch.Tensor:
-        """Vectorized multi-step: per-element step counts.
-
-        k_vec has the same shape as w and holds a non-negative number of
-        grid levels to move in the sign direction. Elements with k_vec=0
-        do not move. Used by the magnitude-scaled / auto step modes.
-        """
+        """Vectorized multi-step: per-element step counts."""
         vmin, vmax = self._range(w)
-        snapped = self.snap(w)
+        return self.step_multi_with_range(w, sign, k_vec, vmin, vmax)
+
+    def step_multi_with_range(self, w: torch.Tensor, sign: torch.Tensor,
+                              k_vec: torch.Tensor, vmin: float,
+                              vmax: float) -> torch.Tensor:
+        """Vectorized multi-step with an explicit range (per-element k)."""
+        snapped = self.snap_with_range(w, vmin, vmax)
         if self.levels == 1:
             return snapped
         delta = (vmax - vmin) / (self.levels - 1)

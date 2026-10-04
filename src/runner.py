@@ -2,12 +2,13 @@
 
 Given a configuration dict describing one (task, model, optimizer, grid,
 seed), this module builds the model, data loaders, optimizer, and
-training loop, runs the training, and writes a single CSV row
-recording the configuration plus final test metrics.
+training loop, runs the training, and writes a single CSV row recording
+the configuration plus final test metrics.
 
-The output of a single run is a row in a per-experiment CSV. Each
-experiment script invokes ``run_one`` (or ``run_many``) for a grid of
-configurations and aggregates the resulting CSVs.
+Reproducibility note: each run gets its own torch.Generator, which is
+handed to the optimizer.  Optimizers therefore no longer perturb the
+global RNG stream, so two optimizers run with the same seed see the same
+minibatch order (common random numbers).
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ import csv
 import json
 import math
 import os
+import resource
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -27,6 +30,12 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from .train import StepRecord, TrainConfig, train
+
+
+def peak_rss_mb() -> float:
+    """Process peak resident set size in MiB (macOS bytes, Linux KiB)."""
+    v = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return v / (1024 * 1024) if sys.platform == "darwin" else v / 1024
 
 
 @dataclass
@@ -53,55 +62,73 @@ class RunResult:
     best_test_acc: float = float("nan")
     best_test_loss: float = float("nan")
     final_acceptance_rate: float = float("nan")
+    mean_acceptance_rate: float = float("nan")
+    final_delta_loss: float = float("nan")
+    final_num_moved: int = 0
     final_train_loss_steps: int = 0
     wall_time_sec: float = float("nan")
+    peak_rss_mb: float = float("nan")
+    rss_growth_mb: float = float("nan")
     # Extra columns for sweeps:
     weight_mse_vs_continuous: float = float("nan")
 
 
 def _build_optimizer(name, params, cfg, grid):
     name = name.lower()
+    rng = cfg.get("rng")
     if name == "sgd":
         return torch.optim.SGD(params, lr=cfg["lr"], momentum=0.0)
     if name in ("momentum", "momentum-sgd"):
         return torch.optim.SGD(params, lr=cfg["lr"], momentum=cfg.get("momentum", 0.9))
     if name == "adam":
         return torch.optim.Adam(params, lr=cfg["lr"])
+    if name in ("adam8bit", "adam-8bit", "adam8"):
+        from .baselines.adam8bit import Adam8Bit
+        return Adam8Bit(params, lr=cfg["lr"])
+    if name in ("signsgd", "sign-sgd", "momentum-sign"):
+        from .baselines.signsgd import SignSGD
+        return SignSGD(params, lr=cfg["lr"], momentum=cfg.get("momentum", 0.9) or 0.9)
     if name == "sgld":
         from .baselines.sgld import SGLD
-        return SGLD(params, lr=cfg["lr"], beta=cfg.get("beta", 1.0))
+        return SGLD(params, lr=cfg["lr"], beta=cfg.get("beta", 1.0), rng=rng)
     if name in ("projected-gd", "projected_gd", "projectedgd"):
         from .baselines.projected_gd import ProjectedGD
-        return ProjectedGD(params, base=cfg.get("project_base", "adam"), grid=grid, lr=cfg["lr"])
+        return ProjectedGD(params, base=cfg.get("project_base", "adam"),
+                           grid=grid, lr=cfg["lr"],
+                           lr_scale=cfg.get("project_lr_scale"))
     if name in ("gdmc", "gdmc-uniform", "gdmc-auto", "gdmc-v3"):
         from .gdmc import GDMCOptimizer
-        # "gdmc-auto" / "gdmc-v3" select the magnitude-scaled step mode
-        # (k chosen so the continuous displacement reaches step_scale).
+        # "gdmc-auto" / "gdmc-v3" select the magnitude-scaled step mode.
         kmode = "auto" if name in ("gdmc-auto", "gdmc-v3") else cfg.get("k_mode", "fixed")
         return GDMCOptimizer(params, grid=grid,
                              beta=cfg.get("beta", 2.0),
                              move_frac=cfg.get("move_frac", 0.01),
+                             accept_on=cfg.get("accept_on", "minibatch"),
                              beta1=cfg.get("beta1", 0.0),
                              k=cfg.get("k", 1),
                              k_mode=kmode,
                              step_scale=cfg.get("step_scale", 1e-3),
                              k_max=cfg.get("k_max", 1 << 22),
-                             grad_ema=cfg.get("grad_ema", 0.99))
+                             grad_ema=cfg.get("grad_ema", 0.99),
+                             rng=rng,
+                             select_mode=cfg.get("select_mode", "bernoulli"),
+                             noise_rho=cfg.get("grad_noise_rho", 0.0))
     if name in ("gdmc-adaptive",):
         from .gdmc import GDMCOptimizer, AdaptiveGrid, make_grid
-        # ``gdmc-adaptive`` historically meant a per-tensor-uniform grid
-        # (range tracks weight magnitude, fixed shape). The fully adaptive
-        # grid was retired because it leads to runaway in some cases.
         return GDMCOptimizer(params,
                              grid=make_grid("uniform-pt", bits=cfg.get("bits", 4)),
                              beta=cfg.get("beta", 2.0),
                              move_frac=cfg.get("move_frac", 0.01),
+                             accept_on=cfg.get("accept_on", "minibatch"),
                              beta1=cfg.get("beta1", 0.0),
                              k=cfg.get("k", 1),
                              k_mode=cfg.get("k_mode", "fixed"),
                              step_scale=cfg.get("step_scale", 1e-3),
                              k_max=cfg.get("k_max", 1 << 22),
-                             grad_ema=cfg.get("grad_ema", 0.99))
+                             grad_ema=cfg.get("grad_ema", 0.99),
+                             rng=rng,
+                             select_mode=cfg.get("select_mode", "bernoulli"),
+                             noise_rho=cfg.get("grad_noise_rho", 0.0))
     raise ValueError(f"unknown optimizer: {name!r}")
 
 
@@ -152,31 +179,49 @@ def run_one(
     k_max=1 << 22,
     grad_ema=0.99,
     curves_dir=None,
+    # --- new controls (all default to the historical behaviour) ---
+    project_lr_scale=None,
+    grad_noise_rho=0.0,
+    accept_on="minibatch",
+    accept_split=0.0,
+    accept_loader=None,
+    select_mode="bernoulli",
 ):
-    """Run a single (model, optimizer, grid, seed) configuration and return a result row.
+    """Run a single (model, optimizer, grid, seed) configuration.
 
-    ``eval_grid_spec`` / ``eval_bits`` allow you to train with one
-    grid and *evaluate* under a different (typically coarser) grid, to
-    measure how well the trained weights transfer to low-bit
-    deployment. If either is None, evaluation uses the training grid
-    (or no snap if no grid was used at training time).
-
-    ``beta1`` and ``k`` are the GDMC v2 knobs (first-moment momentum
-    on the gradient and multi-step grid moves). They are ignored by
-    the other optimizers.
+    project_lr_scale : optional float
+        For projected-gd: set lr = project_lr_scale * grid spacing.
+    grad_noise_rho : float
+        Norm-scaled Gaussian noise on the proposal gradient.
+    accept_on / accept_split / accept_loader :
+        Metropolis acceptance source; see src/gdmc/optimizer.py.
+    select_mode : {"bernoulli", "randperm"}
+        Move-set selection mode for GDMC.
     """
     _set_seed(seed)
+    rng = torch.Generator().manual_seed(int(seed))
     model = model_fn()
     model.to(device)
     grid = _grid_for(grid_spec, bits) if grid_spec else None
     cfg = dict(lr=lr, momentum=momentum, beta=beta, move_frac=move_frac,
                project_base=(extra or {}).get("project_base", "adam"),
+               project_lr_scale=project_lr_scale,
                beta1=beta1, k=k, k_mode=k_mode, step_scale=step_scale,
-               k_max=k_max, grad_ema=grad_ema)
+               k_max=k_max, grad_ema=grad_ema, bits=bits,
+               grad_noise_rho=grad_noise_rho, accept_on=accept_on,
+               select_mode=select_mode, rng=rng)
     optimizer = _build_optimizer(optimizer_name, model.parameters(), cfg, grid)
+    is_closure = bool(getattr(optimizer, "requires_closure", False))
 
-    cfg_train = TrainConfig(epochs=epochs, log_every=log_every, device=device,
-                            is_classification=is_classification)
+    cfg_train = TrainConfig(
+        epochs=epochs, log_every=log_every, device=device,
+        is_classification=is_classification,
+        accept_split=accept_split,
+        accept_loader=accept_loader,
+        # GDMC applies the noise itself; the loop must not add it twice.
+        grad_noise_rho=0.0 if is_closure else grad_noise_rho,
+        grad_noise_generator=None if is_closure else rng,
+    )
 
     snap_fn = None
     if eval_grid_spec is not None and eval_bits is not None:
@@ -186,21 +231,18 @@ def run_one(
                 for p in m.parameters():
                     p.data.copy_(eval_grid.snap(p.data))
     elif grid is not None and optimizer_name in ("sgd", "momentum", "momentum-sgd", "adam", "sgld"):
-        # For non-quantized optimizers we still want to evaluate under
-        # the same grid to make the comparison fair.
         def snap_fn(m):
             with torch.no_grad():
                 for p in m.parameters():
                     p.data.copy_(grid.snap(p.data))
 
+    rss_before = peak_rss_mb()
     t0 = time.time()
     records = train(model, optimizer, train_loader, test_loader, criterion, cfg_train,
                     snap_fn=snap_fn)
     wall = time.time() - t0
+    rss_after = peak_rss_mb()
 
-    # Optionally persist the full per-step curve for this run so that
-    # train/test loss trajectories can be plotted later.  The filename
-    # encodes the run config so a plotting script can glob and group.
     if curves_dir is not None:
         cdir = Path(curves_dir)
         cdir.mkdir(parents=True, exist_ok=True)
@@ -210,6 +252,10 @@ def run_one(
             fname += f"__b1{beta1}__k{k}"
         if k_mode == "auto":
             fname += f"__auto__ss{step_scale:g}"
+        if grad_noise_rho:
+            fname += f"__noise{grad_noise_rho:g}"
+        if accept_on != "minibatch":
+            fname += f"__acc{accept_on}"
         fname += ".csv"
         write_curve_csv(records, cdir / fname)
 
@@ -218,6 +264,7 @@ def run_one(
     test_accs = [r.test_acc for r in records if r.test_acc is not None]
     best_loss = min(test_losses) if test_losses else float("nan")
     best_acc = max(test_accs) if test_accs else float("nan")
+    acc_rates = [r.acceptance_rate for r in records if r.acceptance_rate is not None]
 
     return RunResult(
         task=task,
@@ -235,15 +282,25 @@ def run_one(
         beta1=beta1,
         k=k,
         extra=json.dumps({**(extra or {}), "k_mode": k_mode,
-                          "step_scale": step_scale}),
-        final_train_loss=float(final.loss) if not math.isnan(float(final.loss)) else float("nan"),
+                          "step_scale": step_scale,
+                          "project_lr_scale": project_lr_scale,
+                          "grad_noise_rho": grad_noise_rho,
+                          "accept_on": accept_on,
+                          "select_mode": select_mode}),
+        final_train_loss=float(final.loss),
         final_test_loss=float(final.test_loss) if final.test_loss is not None else float("nan"),
         final_test_acc=float(final.test_acc) if final.test_acc is not None else float("nan"),
         best_test_loss=best_loss,
         best_test_acc=best_acc,
         final_acceptance_rate=float(getattr(optimizer, "last_acceptance_rate", float("nan"))),
+        mean_acceptance_rate=float(np.mean(acc_rates)) if acc_rates else float("nan"),
+        final_delta_loss=(float("nan") if getattr(optimizer, "last_delta_loss", None) is None
+                          else float(optimizer.last_delta_loss)),
+        final_num_moved=int(getattr(optimizer, "last_num_moved", 0) or 0),
         final_train_loss_steps=len(records),
         wall_time_sec=wall,
+        peak_rss_mb=rss_after,
+        rss_growth_mb=max(0.0, rss_after - rss_before),
     )
 
 
@@ -260,19 +317,15 @@ def write_results_csv(results, path):
 
 
 CURVE_FIELDS = ["step", "epoch", "loss", "test_loss", "test_acc",
-                "accepted", "acceptance_rate"]
+                "accepted", "acceptance_rate", "delta_loss", "num_moved",
+                "accepted_step_size"]
 
 
 def write_curve_csv(records, path):
-    """Write the per-step training curve for a single run to a CSV.
-
-    Columns: step, epoch, loss (train, mini-batch), test_loss, test_acc,
-    accepted (last Metropolis decision), acceptance_rate (smoothed).
-    Test metrics are only populated on eval steps (every log_every).
-    """
+    """Write the per-step training curve for a single run to a CSV."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=CURVE_FIELDS)
+        w = csv.DictWriter(f, fieldnames=CURVE_FIELDS, extrasaction="ignore")
         w.writeheader()
         for r in records:
             w.writerow({k: getattr(r, k, "") for k in CURVE_FIELDS})
@@ -281,8 +334,7 @@ def write_curve_csv(records, path):
 def read_curves(curves_dir, pattern="*.csv"):
     """Load all per-run curve CSVs in curves_dir into one DataFrame.
 
-    Parses the run config out of the filename (the format written by
-    run_one).  Requires pandas.
+    Parses the run config out of the filename (run_one format). Requires pandas.
     """
     import pandas as pd
     rows = []
@@ -303,6 +355,8 @@ def read_curves(curves_dir, pattern="*.csv"):
                     meta["step_scale"] = float(extra[2:])
                 elif extra.startswith("k"):
                     meta["k"] = int(extra[1:])
+                elif extra.startswith("noise"):
+                    meta["grad_noise_rho"] = float(extra[5:])
         df = pd.read_csv(p)
         for k, v in meta.items():
             df[k] = v

@@ -78,5 +78,6 @@ class SGLD(torch.optim.Optimizer):
 
 
 def make_sgld(params: Iterable[torch.nn.Parameter], lr: float = 1e-3,
-              beta: float = 1.0, weight_decay: float = 0.0) -> SGLD:
-    return SGLD(params, lr=lr, beta=beta, weight_decay=weight_decay)
+              beta: float = 1.0, weight_decay: float = 0.0,
+              rng: Optional[torch.Generator] = None) -> SGLD:
+    return SGLD(params, lr=lr, beta=beta, weight_decay=weight_decay, rng=rng)

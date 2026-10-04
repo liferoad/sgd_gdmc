@@ -10,7 +10,9 @@ by the learning rate at each step (Welling & Teh, 2011).
 from .sgd import make_sgd
 from .momentum import make_momentum
 from .adam import make_adam
-from .projected_gd import ProjectedGD, make_projected_gd
+from .projected_gd import ProjectedGD, make_projected_gd, grid_delta
+from .adam8bit import Adam8Bit, make_adam8bit
+from .signsgd import SignSGD, make_signsgd
 from .sgld import SGLD, make_sgld
 
 __all__ = [
@@ -19,6 +21,11 @@ __all__ = [
     "make_adam",
     "ProjectedGD",
     "make_projected_gd",
+    "grid_delta",
+    "Adam8Bit",
+    "make_adam8bit",
+    "SignSGD",
+    "make_signsgd",
     "SGLD",
     "make_sgld",
 ]
