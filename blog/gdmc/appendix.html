@@ -1,0 +1,147 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Learning on a Grid — Xiangqian Hu</title><style>*{box-sizing:border-box}body{margin:0;color:#263342;background:#faf9f6;font:19px/1.75 Georgia,serif}article{max-width:860px;margin:auto;padding:45px 34px 100px}h1{font:700 48px/1.12 system-ui,sans-serif;letter-spacing:-1.6px;margin:25px 0}h2{font:700 28px/1.25 system-ui,sans-serif;letter-spacing:-.5px;margin:52px 0 18px}h3{font:700 22px/1.3 system-ui,sans-serif}p{margin:20px 0}a{color:#187b80;text-underline-offset:3px}strong{color:#142e40}figure{margin:35px -28px 12px}figure img{display:block;width:100%;border-radius:6px}blockquote{margin:30px 0;border-left:4px solid #ce602c;padding:15px 24px;background:#f1ece3;font-size:24px;line-height:1.5}table{width:100%;border-collapse:collapse;font:13px/1.5 system-ui,sans-serif;background:white}th{background:#15384b;color:white;text-align:left}th,td{padding:11px 12px;border-bottom:1px solid #e2e7ea}tr:nth-child(even){background:#f4f7f8}.table-wrap{overflow-x:auto;margin:24px 0}pre{overflow-x:auto;background:#eaf0f2;padding:20px;font-size:13px}code{font-size:.83em}nav{font:12px/1.5 system-ui,sans-serif;letter-spacing:1px;text-transform:uppercase;color:#667786}li{margin:9px 0}p:has(>em:only-child){font:14px/1.6 system-ui,sans-serif;color:#596575;margin-top:8px}@media(max-width:600px){article{padding:22px 20px 60px}h1{font-size:35px}h2{font-size:25px}figure{margin-left:-12px;margin-right:-12px}body{font-size:18px}}@media print{body{background:white}article{max-width:none;padding:0}h2{break-after:avoid}figure,table{break-inside:avoid}nav{display:none}}</style></head><body><article><nav>Research draft · Xiangqian Hu · <a href="article.html">Main article</a></nav><h1>GDMC blog: data and methods companion</h1>
+<p>This companion contains the complete primary comparison and supporting studies. The main article is in <code>article.md</code>. All percentages below are calculated from saved per-run CSVs, not transcribed from earlier prose reports.</p>
+<h2>Primary experiment</h2>
+<p>Experiment 15 trains a 784–256–256–10 ReLU MLP from scratch for 10 epochs. Each task uses 55,000 fitting examples, 5,000 validation examples and 10,000 official test examples, with batch size 128. MNIST has 10 evaluation seeds (0–9); Fashion-MNIST has 8 (0–7). There are 288 final runs. Weight grids are uniform in [−1,1], with 4, 16 and 256 levels. These even-sized symmetric grids do not contain exactly zero. They are not interchangeable with every integer quantization convention.</p>
+<p>The four direct-grid methods each receive three validation candidates using seed 100 and a four-epoch tuning horizon. Basic/momentum GDMC tune β ∈ {1,2,4}, with k=1 and move_frac=0.01; momentum uses β₁=0.9. Projected Adam and projected momentum SGD tune learning rate / grid spacing ∈ {0.25,0.5,1}. Projected SGD uses momentum 0.9. QAT and FP32 Adam each use a fixed learning rate of 0.001; they do not receive the three-candidate search. No learning-rate decay is used. Equal candidate counts do not imply equally effective search ranges: the projected SGD baseline is nearly frozen at 8 bits and needs a broader search before a strong comparison with SGD is possible.</p>
+<p>Final accuracy is the last recorded evaluation. Peak accuracy is each run&#x27;s maximum test accuracy over logged evaluations: it is a descriptive, test-selected statistic, not a validation-selected checkpoint score. Pairing matches random seeds across methods. Reported intervals are ordinary 95% t-intervals across seeds; paired-effect intervals use within-seed differences. They quantify seed variation, not generalization across datasets or uncertainty from model/hyperparameter selection. No multiple-comparison correction is applied. No power analysis is claimed.</p>
+<p>QAT qualification: matrix weights are quantized by STE during training, but biases remain continuous. Evaluation snaps all parameters including biases. Direct-grid methods quantize biases during training too. Thus the QAT result is provisional, with a different training policy; a corrected comparison should harmonize biases. All weights, gradients and momentum buffers in this prototype are physically floating-point tensors. Low-bit here describes allowed weight values, not packed storage or low-bit arithmetic.</p>
+<h2>MNIST: final accuracy</h2>
+<div class="table-wrap"><table><thead><tr><th></th><th>2</th><th>4</th><th>8</th><th>32</th></tr></thead><tbody>
+<tr><td>Basic GDMC</td><td>77.68</td><td>89.21</td><td>94.26</td><td>nan</td></tr>
+<tr><td>Momentum GDMC</td><td>40.99</td><td>93.35</td><td>97.43</td><td>nan</td></tr>
+<tr><td>Projected Adam</td><td>46.35</td><td>49.07</td><td>97.07</td><td>nan</td></tr>
+<tr><td>Projected momentum SGD</td><td>38.53</td><td>42.70</td><td>9.47</td><td>nan</td></tr>
+<tr><td>QAT (provisional)</td><td>93.54</td><td>97.70</td><td>97.68</td><td>nan</td></tr>
+<tr><td>FP32 Adam</td><td>nan</td><td>nan</td><td>nan</td><td>97.91</td></tr>
+</tbody></table></div>
+<h2>Fashion-MNIST: final accuracy</h2>
+<div class="table-wrap"><table><thead><tr><th></th><th>2</th><th>4</th><th>8</th><th>32</th></tr></thead><tbody>
+<tr><td>Basic GDMC</td><td>55.66</td><td>75.42</td><td>84.73</td><td>nan</td></tr>
+<tr><td>Momentum GDMC</td><td>29.23</td><td>75.07</td><td>87.51</td><td>nan</td></tr>
+<tr><td>Projected Adam</td><td>35.90</td><td>55.89</td><td>86.34</td><td>nan</td></tr>
+<tr><td>Projected momentum SGD</td><td>47.52</td><td>61.83</td><td>9.38</td><td>nan</td></tr>
+<tr><td>QAT (provisional)</td><td>75.72</td><td>87.90</td><td>88.31</td><td>nan</td></tr>
+<tr><td>FP32 Adam</td><td>nan</td><td>nan</td><td>nan</td><td>88.41</td></tr>
+</tbody></table></div>
+<h2>All primary estimates and intervals</h2>
+<div class="table-wrap"><table><thead><tr><th>dataset</th><th>method</th><th>bits</th><th>metric</th><th>n</th><th>mean_pct</th><th>ci_low_pct</th><th>ci_high_pct</th></tr></thead><tbody>
+<tr><td>fashion</td><td>adam-fp32</td><td>32</td><td>best_test_acc</td><td>8</td><td>88.536</td><td>88.353</td><td>88.720</td></tr>
+<tr><td>fashion</td><td>adam-fp32</td><td>32</td><td>final_test_acc</td><td>8</td><td>88.407</td><td>88.190</td><td>88.625</td></tr>
+<tr><td>fashion</td><td>gdmc-v1</td><td>2</td><td>best_test_acc</td><td>8</td><td>65.835</td><td>64.471</td><td>67.199</td></tr>
+<tr><td>fashion</td><td>gdmc-v1</td><td>2</td><td>final_test_acc</td><td>8</td><td>55.663</td><td>53.093</td><td>58.232</td></tr>
+<tr><td>fashion</td><td>gdmc-v1</td><td>4</td><td>best_test_acc</td><td>8</td><td>76.312</td><td>75.583</td><td>77.042</td></tr>
+<tr><td>fashion</td><td>gdmc-v1</td><td>4</td><td>final_test_acc</td><td>8</td><td>75.419</td><td>74.343</td><td>76.494</td></tr>
+<tr><td>fashion</td><td>gdmc-v1</td><td>8</td><td>best_test_acc</td><td>8</td><td>84.744</td><td>84.649</td><td>84.839</td></tr>
+<tr><td>fashion</td><td>gdmc-v1</td><td>8</td><td>final_test_acc</td><td>8</td><td>84.727</td><td>84.628</td><td>84.827</td></tr>
+<tr><td>fashion</td><td>gdmc-v2</td><td>2</td><td>best_test_acc</td><td>8</td><td>32.738</td><td>30.303</td><td>35.172</td></tr>
+<tr><td>fashion</td><td>gdmc-v2</td><td>2</td><td>final_test_acc</td><td>8</td><td>29.234</td><td>21.980</td><td>36.487</td></tr>
+<tr><td>fashion</td><td>gdmc-v2</td><td>4</td><td>best_test_acc</td><td>8</td><td>79.251</td><td>78.429</td><td>80.074</td></tr>
+<tr><td>fashion</td><td>gdmc-v2</td><td>4</td><td>final_test_acc</td><td>8</td><td>75.068</td><td>72.768</td><td>77.367</td></tr>
+<tr><td>fashion</td><td>gdmc-v2</td><td>8</td><td>best_test_acc</td><td>8</td><td>87.510</td><td>87.311</td><td>87.709</td></tr>
+<tr><td>fashion</td><td>gdmc-v2</td><td>8</td><td>final_test_acc</td><td>8</td><td>87.507</td><td>87.307</td><td>87.708</td></tr>
+<tr><td>fashion</td><td>projected-adam</td><td>2</td><td>best_test_acc</td><td>8</td><td>73.509</td><td>71.931</td><td>75.086</td></tr>
+<tr><td>fashion</td><td>projected-adam</td><td>2</td><td>final_test_acc</td><td>8</td><td>35.895</td><td>26.119</td><td>45.671</td></tr>
+<tr><td>fashion</td><td>projected-adam</td><td>4</td><td>best_test_acc</td><td>8</td><td>75.279</td><td>73.676</td><td>76.881</td></tr>
+<tr><td>fashion</td><td>projected-adam</td><td>4</td><td>final_test_acc</td><td>8</td><td>55.891</td><td>43.103</td><td>68.679</td></tr>
+<tr><td>fashion</td><td>projected-adam</td><td>8</td><td>best_test_acc</td><td>8</td><td>86.659</td><td>86.459</td><td>86.858</td></tr>
+<tr><td>fashion</td><td>projected-adam</td><td>8</td><td>final_test_acc</td><td>8</td><td>86.335</td><td>86.000</td><td>86.670</td></tr>
+<tr><td>fashion</td><td>projected-msgd</td><td>2</td><td>best_test_acc</td><td>8</td><td>49.614</td><td>39.100</td><td>60.128</td></tr>
+<tr><td>fashion</td><td>projected-msgd</td><td>2</td><td>final_test_acc</td><td>8</td><td>47.516</td><td>37.515</td><td>57.517</td></tr>
+<tr><td>fashion</td><td>projected-msgd</td><td>4</td><td>best_test_acc</td><td>8</td><td>63.635</td><td>62.292</td><td>64.978</td></tr>
+<tr><td>fashion</td><td>projected-msgd</td><td>4</td><td>final_test_acc</td><td>8</td><td>61.831</td><td>59.538</td><td>64.125</td></tr>
+<tr><td>fashion</td><td>projected-msgd</td><td>8</td><td>best_test_acc</td><td>8</td><td>9.377</td><td>7.776</td><td>10.979</td></tr>
+<tr><td>fashion</td><td>projected-msgd</td><td>8</td><td>final_test_acc</td><td>8</td><td>9.377</td><td>7.776</td><td>10.979</td></tr>
+<tr><td>fashion</td><td>qat-ste-adam</td><td>2</td><td>best_test_acc</td><td>8</td><td>77.900</td><td>76.314</td><td>79.486</td></tr>
+<tr><td>fashion</td><td>qat-ste-adam</td><td>2</td><td>final_test_acc</td><td>8</td><td>75.718</td><td>73.333</td><td>78.102</td></tr>
+<tr><td>fashion</td><td>qat-ste-adam</td><td>4</td><td>best_test_acc</td><td>8</td><td>87.981</td><td>87.824</td><td>88.139</td></tr>
+<tr><td>fashion</td><td>qat-ste-adam</td><td>4</td><td>final_test_acc</td><td>8</td><td>87.903</td><td>87.695</td><td>88.110</td></tr>
+<tr><td>fashion</td><td>qat-ste-adam</td><td>8</td><td>best_test_acc</td><td>8</td><td>88.535</td><td>88.309</td><td>88.761</td></tr>
+<tr><td>fashion</td><td>qat-ste-adam</td><td>8</td><td>final_test_acc</td><td>8</td><td>88.309</td><td>87.928</td><td>88.690</td></tr>
+<tr><td>mnist</td><td>adam-fp32</td><td>32</td><td>best_test_acc</td><td>10</td><td>98.013</td><td>97.970</td><td>98.056</td></tr>
+<tr><td>mnist</td><td>adam-fp32</td><td>32</td><td>final_test_acc</td><td>10</td><td>97.915</td><td>97.787</td><td>98.043</td></tr>
+<tr><td>mnist</td><td>gdmc-v1</td><td>2</td><td>best_test_acc</td><td>10</td><td>79.665</td><td>79.268</td><td>80.062</td></tr>
+<tr><td>mnist</td><td>gdmc-v1</td><td>2</td><td>final_test_acc</td><td>10</td><td>77.679</td><td>76.786</td><td>78.572</td></tr>
+<tr><td>mnist</td><td>gdmc-v1</td><td>4</td><td>best_test_acc</td><td>10</td><td>89.532</td><td>89.304</td><td>89.760</td></tr>
+<tr><td>mnist</td><td>gdmc-v1</td><td>4</td><td>final_test_acc</td><td>10</td><td>89.212</td><td>88.918</td><td>89.506</td></tr>
+<tr><td>mnist</td><td>gdmc-v1</td><td>8</td><td>best_test_acc</td><td>10</td><td>94.268</td><td>94.157</td><td>94.379</td></tr>
+<tr><td>mnist</td><td>gdmc-v1</td><td>8</td><td>final_test_acc</td><td>10</td><td>94.260</td><td>94.145</td><td>94.375</td></tr>
+<tr><td>mnist</td><td>gdmc-v2</td><td>2</td><td>best_test_acc</td><td>10</td><td>49.446</td><td>45.150</td><td>53.742</td></tr>
+<tr><td>mnist</td><td>gdmc-v2</td><td>2</td><td>final_test_acc</td><td>10</td><td>40.986</td><td>36.295</td><td>45.677</td></tr>
+<tr><td>mnist</td><td>gdmc-v2</td><td>4</td><td>best_test_acc</td><td>10</td><td>93.515</td><td>93.069</td><td>93.961</td></tr>
+<tr><td>mnist</td><td>gdmc-v2</td><td>4</td><td>final_test_acc</td><td>10</td><td>93.354</td><td>92.796</td><td>93.912</td></tr>
+<tr><td>mnist</td><td>gdmc-v2</td><td>8</td><td>best_test_acc</td><td>10</td><td>97.438</td><td>97.369</td><td>97.507</td></tr>
+<tr><td>mnist</td><td>gdmc-v2</td><td>8</td><td>final_test_acc</td><td>10</td><td>97.427</td><td>97.357</td><td>97.497</td></tr>
+<tr><td>mnist</td><td>projected-adam</td><td>2</td><td>best_test_acc</td><td>10</td><td>79.599</td><td>70.618</td><td>88.580</td></tr>
+<tr><td>mnist</td><td>projected-adam</td><td>2</td><td>final_test_acc</td><td>10</td><td>46.347</td><td>30.051</td><td>62.643</td></tr>
+<tr><td>mnist</td><td>projected-adam</td><td>4</td><td>best_test_acc</td><td>10</td><td>91.703</td><td>90.900</td><td>92.506</td></tr>
+<tr><td>mnist</td><td>projected-adam</td><td>4</td><td>final_test_acc</td><td>10</td><td>49.068</td><td>28.222</td><td>69.914</td></tr>
+<tr><td>mnist</td><td>projected-adam</td><td>8</td><td>best_test_acc</td><td>10</td><td>97.389</td><td>97.225</td><td>97.553</td></tr>
+<tr><td>mnist</td><td>projected-adam</td><td>8</td><td>final_test_acc</td><td>10</td><td>97.068</td><td>96.854</td><td>97.282</td></tr>
+<tr><td>mnist</td><td>projected-msgd</td><td>2</td><td>best_test_acc</td><td>10</td><td>40.938</td><td>30.919</td><td>50.957</td></tr>
+<tr><td>mnist</td><td>projected-msgd</td><td>2</td><td>final_test_acc</td><td>10</td><td>38.526</td><td>28.373</td><td>48.679</td></tr>
+<tr><td>mnist</td><td>projected-msgd</td><td>4</td><td>best_test_acc</td><td>10</td><td>43.055</td><td>33.039</td><td>53.071</td></tr>
+<tr><td>mnist</td><td>projected-msgd</td><td>4</td><td>final_test_acc</td><td>10</td><td>42.704</td><td>32.681</td><td>52.727</td></tr>
+<tr><td>mnist</td><td>projected-msgd</td><td>8</td><td>best_test_acc</td><td>10</td><td>9.470</td><td>7.718</td><td>11.222</td></tr>
+<tr><td>mnist</td><td>projected-msgd</td><td>8</td><td>final_test_acc</td><td>10</td><td>9.470</td><td>7.718</td><td>11.222</td></tr>
+<tr><td>mnist</td><td>qat-ste-adam</td><td>2</td><td>best_test_acc</td><td>10</td><td>94.223</td><td>94.007</td><td>94.439</td></tr>
+<tr><td>mnist</td><td>qat-ste-adam</td><td>2</td><td>final_test_acc</td><td>10</td><td>93.544</td><td>93.113</td><td>93.975</td></tr>
+<tr><td>mnist</td><td>qat-ste-adam</td><td>4</td><td>best_test_acc</td><td>10</td><td>97.858</td><td>97.751</td><td>97.965</td></tr>
+<tr><td>mnist</td><td>qat-ste-adam</td><td>4</td><td>final_test_acc</td><td>10</td><td>97.704</td><td>97.574</td><td>97.834</td></tr>
+<tr><td>mnist</td><td>qat-ste-adam</td><td>8</td><td>best_test_acc</td><td>10</td><td>98.055</td><td>97.969</td><td>98.141</td></tr>
+<tr><td>mnist</td><td>qat-ste-adam</td><td>8</td><td>final_test_acc</td><td>10</td><td>97.680</td><td>97.448</td><td>97.912</td></tr>
+</tbody></table></div>
+<h2>Paired 4-bit effects</h2>
+<p>All quantities are percentage-point differences, momentum GDMC minus projected Adam. Peak and final metrics are separate, not interchangeable evidence.</p>
+<div class="table-wrap"><table><thead><tr><th>dataset</th><th>bits</th><th>metric</th><th>n</th><th>mean_pp</th><th>ci_low_pp</th><th>ci_high_pp</th><th>positive_seeds</th></tr></thead><tbody>
+<tr><td>mnist</td><td>4</td><td>best_test_acc</td><td>10</td><td>1.812</td><td>0.950</td><td>2.674</td><td>10</td></tr>
+<tr><td>fashion</td><td>4</td><td>best_test_acc</td><td>8</td><td>3.973</td><td>2.283</td><td>5.662</td><td>8</td></tr>
+<tr><td>mnist</td><td>4</td><td>final_test_acc</td><td>10</td><td>44.286</td><td>23.342</td><td>65.230</td><td>10</td></tr>
+<tr><td>fashion</td><td>4</td><td>final_test_acc</td><td>8</td><td>19.176</td><td>6.774</td><td>31.579</td><td>8</td></tr>
+</tbody></table></div>
+<h2>Supporting noise study</h2>
+<p>Experiment 14 uses a separate MNIST protocol: eight epochs, the full 60K training set, three seeds, and Gaussian noise scaled by each tensor&#x27;s gradient RMS. Noise is injected into the gradient used for the update; acceptance losses are not directly perturbed. It compares low-bit GDMC to FP32 Adam, not to an equivalently quantized Adam baseline. These results do not establish whether GDMC is more noise-tolerant than other direct-grid methods. The unchanged acceptance-ablation scores are specific to this setup and temperature/move-size range.</p>
+<figure><img src="assets/05_noise_study.png" alt="Noise study: accuracy falls more for GDMC under strong injected noise." loading="lazy"></figure>
+<h2>Supporting memory study</h2>
+<p>Experiment 13 isolates each optimizer in a fresh CPU process, using a 20,979,712-parameter MLP for three steps. These are single-run process RSS measurements, not GPU allocator peaks or averages. The pre-step-to-peak increase includes gradients, activations and scratch space as well as optimizer state. Do not interpret it as optimizer-state size alone. Every method uses FP32 weight storage. The custom 8-bit-state Adam baseline is this repository&#x27;s implementation, not a measurement of a third-party library.</p>
+<figure><img src="assets/06_memory_probe.png" alt="Total process memory measured in the separate CPU benchmark." loading="lazy"></figure>
+<div class="table-wrap"><table><thead><tr><th>method</th><th>params</th><th>steps</th><th>base_mb</th><th>peak_mb</th><th>growth_mb</th><th>growth_bytes_per_param</th><th>state_bytes_per_param</th><th>grad_bytes_per_param</th><th>weight_bytes_per_param</th></tr></thead><tbody>
+<tr><td>adam</td><td>20979712</td><td>3</td><td>361.67</td><td>808.53</td><td>446.86</td><td>22.33</td><td>8.00</td><td>4.00</td><td>4.00</td></tr>
+<tr><td>adam8bit</td><td>20979712</td><td>3</td><td>358.44</td><td>535.03</td><td>176.59</td><td>8.83</td><td>2.01</td><td>4.00</td><td>4.00</td></tr>
+<tr><td>gdmc-v1</td><td>20979712</td><td>3</td><td>364.11</td><td>600.27</td><td>236.16</td><td>11.80</td><td>0.00</td><td>4.00</td><td>4.00</td></tr>
+<tr><td>gdmc-v2</td><td>20979712</td><td>3</td><td>361.73</td><td>671.73</td><td>310.00</td><td>15.49</td><td>4.00</td><td>4.00</td><td>4.00</td></tr>
+<tr><td>gdmc-v2-mf1</td><td>20979712</td><td>3</td><td>357.95</td><td>1470.47</td><td>1112.52</td><td>55.60</td><td>4.00</td><td>4.00</td><td>4.00</td></tr>
+</tbody></table></div>
+<h2>Complete noise-study means</h2>
+<p>Both accuracy columns are percentages. These cells belong to the separate eight-epoch, three-seed protocol above.</p>
+<div class="table-wrap"><table><thead><tr><th>label</th><th>bits</th><th>rho</th><th>seeds</th><th>peak_accuracy</th><th>final_accuracy</th></tr></thead><tbody>
+<tr><td>adam</td><td>32</td><td>0.000</td><td>3</td><td>97.933</td><td>97.860</td></tr>
+<tr><td>adam</td><td>32</td><td>0.100</td><td>3</td><td>97.813</td><td>97.730</td></tr>
+<tr><td>adam</td><td>32</td><td>0.300</td><td>3</td><td>97.883</td><td>97.883</td></tr>
+<tr><td>adam</td><td>32</td><td>1.000</td><td>3</td><td>97.820</td><td>97.790</td></tr>
+<tr><td>adam</td><td>32</td><td>3.000</td><td>3</td><td>97.457</td><td>97.450</td></tr>
+<tr><td>gdmc-b4-accept</td><td>4</td><td>0.000</td><td>3</td><td>92.603</td><td>92.290</td></tr>
+<tr><td>gdmc-b4-accept</td><td>4</td><td>0.100</td><td>3</td><td>92.847</td><td>92.137</td></tr>
+<tr><td>gdmc-b4-accept</td><td>4</td><td>0.300</td><td>3</td><td>92.853</td><td>91.887</td></tr>
+<tr><td>gdmc-b4-accept</td><td>4</td><td>1.000</td><td>3</td><td>91.457</td><td>91.237</td></tr>
+<tr><td>gdmc-b4-accept</td><td>4</td><td>3.000</td><td>3</td><td>89.420</td><td>85.263</td></tr>
+<tr><td>gdmc-b8-accept</td><td>8</td><td>0.000</td><td>3</td><td>97.330</td><td>97.330</td></tr>
+<tr><td>gdmc-b8-accept</td><td>8</td><td>0.100</td><td>3</td><td>97.407</td><td>97.407</td></tr>
+<tr><td>gdmc-b8-accept</td><td>8</td><td>0.300</td><td>3</td><td>97.277</td><td>97.277</td></tr>
+<tr><td>gdmc-b8-accept</td><td>8</td><td>1.000</td><td>3</td><td>96.873</td><td>96.873</td></tr>
+<tr><td>gdmc-b8-accept</td><td>8</td><td>3.000</td><td>3</td><td>94.903</td><td>94.903</td></tr>
+<tr><td>gdmc-b8-accept-separate</td><td>8</td><td>1.000</td><td>3</td><td>96.130</td><td>96.130</td></tr>
+<tr><td>gdmc-b8-accept-separate</td><td>8</td><td>3.000</td><td>3</td><td>93.960</td><td>93.960</td></tr>
+<tr><td>gdmc-b8-always-accept</td><td>8</td><td>0.000</td><td>3</td><td>97.330</td><td>97.330</td></tr>
+<tr><td>gdmc-b8-always-accept</td><td>8</td><td>0.100</td><td>3</td><td>97.407</td><td>97.407</td></tr>
+<tr><td>gdmc-b8-always-accept</td><td>8</td><td>0.300</td><td>3</td><td>97.277</td><td>97.277</td></tr>
+<tr><td>gdmc-b8-always-accept</td><td>8</td><td>1.000</td><td>3</td><td>96.873</td><td>96.873</td></tr>
+<tr><td>gdmc-b8-always-accept</td><td>8</td><td>3.000</td><td>3</td><td>94.903</td><td>94.903</td></tr>
+</tbody></table></div>
+<h2>Earlier experiments: exploratory context</h2>
+<p>Experiments 01–11 investigated toy regression, MNIST MLP/CNN, CIFAR-10 CNN, temperature, momentum, multi-step moves, and magnitude-scaled steps. Their saved results predate corrections to evaluation mode, per-tensor grids, acceptance, and/or baseline tuning. They are useful provenance, but are not pooled with the corrected two-task comparison or used to claim CNN/large-model superiority. The fine-grid experiments motivate adaptive jump sizes; they do not establish a universal benefit from that modification.</p>
+<p>Experiments 12–14 repaired baseline comparisons and added memory/noise studies. Experiment 15 is the primary evidence in this article. These protocols have different fitting-set sizes, horizons and tuning settings, so their accuracy numbers must not be compared as if they were one controlled sweep.</p>
+<h2>Reproducibility</h2>
+<p>Rebuild these figures and this companion from the existing results:</p>
+<pre><code>.venv/bin/python blog/gdmc/build.py</code></pre>
+<p>Raw files: <code>results/raw/lowbit_comparison.csv</code>, <code>results/raw/lowbit_comparison_fashion.csv</code>, <code>results/raw/noise_study.csv</code>, <code>results/raw/memory_benchmark.csv</code>. Selected settings: <code>results/lowbit_settings_mnist.json</code> and <code>results/lowbit_settings_fashion.json</code>. Learning curves: <code>results/curves/lowbit_mnist/</code> and <code>results/curves/lowbit_fashion/</code>.</p>
+<p><code>source_manifest.json</code> records source hashes and the repository revision. <code>all_results.csv</code> and <code>paired_effects.csv</code> provide the chart-ready numerical tables. PNG assets are intended for upload to Medium; SVG copies remain editable. No training was run to prepare the blog.</p></article></body></html>

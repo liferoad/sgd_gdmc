@@ -1,0 +1,84 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Learning on a Grid — Xiangqian Hu</title><style>*{box-sizing:border-box}body{margin:0;color:#263342;background:#faf9f6;font:19px/1.75 Georgia,serif}article{max-width:860px;margin:auto;padding:45px 34px 100px}h1{font:700 48px/1.12 system-ui,sans-serif;letter-spacing:-1.6px;margin:25px 0}h2{font:700 28px/1.25 system-ui,sans-serif;letter-spacing:-.5px;margin:52px 0 18px}h3{font:700 22px/1.3 system-ui,sans-serif}p{margin:20px 0}a{color:#187b80;text-underline-offset:3px}strong{color:#142e40}figure{margin:35px -28px 12px}figure img{display:block;width:100%;border-radius:6px}blockquote{margin:30px 0;border-left:4px solid #ce602c;padding:15px 24px;background:#f1ece3;font-size:24px;line-height:1.5}table{width:100%;border-collapse:collapse;font:13px/1.5 system-ui,sans-serif;background:white}th{background:#15384b;color:white;text-align:left}th,td{padding:11px 12px;border-bottom:1px solid #e2e7ea}tr:nth-child(even){background:#f4f7f8}.table-wrap{overflow-x:auto;margin:24px 0}pre{overflow-x:auto;background:#eaf0f2;padding:20px;font-size:13px}code{font-size:.83em}nav{font:12px/1.5 system-ui,sans-serif;letter-spacing:1px;text-transform:uppercase;color:#667786}li{margin:9px 0}p:has(>em:only-child){font:14px/1.6 system-ui,sans-serif;color:#596575;margin-top:8px}@media(max-width:600px){article{padding:22px 20px 60px}h1{font-size:35px}h2{font-size:25px}figure{margin-left:-12px;margin-right:-12px}body{font-size:18px}}@media print{body{background:white}article{max-width:none;padding:0}h2{break-after:avoid}figure,table{break-inside:avoid}nav{display:none}}</style></head><body><article><nav>Research draft · Xiangqian Hu · <a href="appendix.html">Data & methods</a></nav><h1>Can Neural Networks Learn Directly on Low-Bit Weights?</h1>
+<p><strong>Revisiting gradient-directed Monte Carlo—from molecular design to a 16-value weight grid.</strong></p>
+<p>By Xiangqian Hu</p>
+<figure><img src="assets/01_learning_on_a_grid.png" alt="Learning on a grid: a gradient suggests a move between discrete weight values, followed by a loss check." loading="lazy"></figure>
+<p>Imagine training a neural network whose weights can take only 16 values. No hidden, high-precision copy accumulating tiny updates. Every change must land on one of those 16 choices.</p>
+<p>Can the network still learn? And does an optimizer designed around discrete moves have an advantage?</p>
+<p>Those are the two questions behind this project. The answer to the first is encouraging: <strong>basic gradient-directed Monte Carlo, or GDMC, learns on both handwritten digits and clothing images.</strong> The answer to the second depends on precision. At 4 bits, GDMC with momentum outperforms the projected Adam configuration tested here. At 2 bits, momentum makes GDMC much worse.</p>
+<p>That surprise is part of the story. Low-precision training changes more than the number of bits we store. It can change which optimization choices work.</p>
+<h2>Why revisit the optimizer?</h2>
+<p>In my earlier <a href="https://huxiangqian.medium.com/binarynets-how-binarized-neural-networks-differ-from-regular-neural-networks-with-toy-code-e5bdbd776606">BinaryNets article</a>, I explored networks constrained to very limited numerical values. This project asks a related question about learning: what if the optimizer worked directly with those discrete choices?</p>
+<p>A weight is an adjustable number that helps determine a network&#x27;s prediction. A gradient tells us how changing that number would affect the prediction error, or loss. Familiar optimizers such as Adam use gradients to propose small numerical updates.</p>
+<p>On a coarse grid, small updates can disappear. With 16 evenly spaced values between −1 and +1, adjacent levels are about 0.133 apart. Move by 0.01 and round back to the nearest level, and the weight may not move at all. Increase the step too much, and training can become unstable.</p>
+<p>GDMC takes the grid seriously from the beginning: it proposes a move between allowed values.</p>
+<h2>An idea from molecular design</h2>
+<p>GDMC comes from my earlier work with David Beratan and Weitao Yang on searching discrete chemical spaces. Our <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC2776780/">2009 paper</a> applied gradient-directed search to protein sequence design and folding. The broad idea was to use gradient information to guide choices in a space whose actual states were discrete.</p>
+<p>Here, the discrete states are neural-network weights. This is an adaptation of that idea, not a claim that a protein-design algorithm transfers unchanged.</p>
+<p>The training loop is easy to describe:</p>
+<ol><li>Compute the usual neural-network gradient at the current weights.</li><li>Choose a small random subset of weights and propose grid moves in the downhill direction.</li><li>Compare the loss before and after the proposed move. Keep improvements; sometimes accept a worse move, controlled by a temperature parameter. Otherwise restore the previous weights.</li></ol>
+<p>For a loss increase ΔL, the acceptance probability is exp(−βΔL). Larger β makes the decision more selective. This loss-based rule is used here as an optimization heuristic; the experiments do not establish exact sampling guarantees or global optimization.</p>
+<p>The <strong>basic version</strong> uses the current gradient. The <strong>momentum version</strong> uses a running average of gradients, so recent history influences the direction. Both variants in the main study move one grid level at a time and select roughly 1% of each parameter tensor per update.</p>
+<p>GDMC still uses backpropagation. The change is how it turns a gradient into a weight update.</p>
+<h2>A small experiment with a clear question</h2>
+<p>I used the same fully connected network on two tasks: MNIST, which recognizes handwritten digits, and Fashion-MNIST, which recognizes clothing categories. The network has two hidden layers of 256 units.</p>
+<p>Weights use uniform grids with <strong>4 choices at 2 bits, 16 at 4 bits, and 256 at 8 bits</strong>. Each run trains from scratch for ten epochs. The primary study includes ten random seeds for MNIST and eight for Fashion-MNIST—288 final runs across all methods and precisions.</p>
+<p>The comparisons answer different questions:</p>
+<div class="table-wrap"><table><thead><tr><th>Method</th><th>How it handles weights</th></tr></thead><tbody>
+<tr><td>Basic GDMC</td><td>Proposes direct grid moves using the gradient</td></tr>
+<tr><td>Momentum GDMC</td><td>Proposes direct grid moves using averaged gradients</td></tr>
+<tr><td>Projected Adam / momentum SGD</td><td>Applies an optimizer update, then rounds onto the grid</td></tr>
+<tr><td>Latent-weight QAT</td><td>Keeps continuous training weights; quantizes matrix weights in the forward pass</td></tr>
+<tr><td>FP32 Adam</td><td>Full-precision accuracy reference</td></tr>
+</tbody></table></div>
+<p>The four direct-grid methods each receive three candidate settings, selected on a separate validation split. QAT and FP32 Adam use a fixed learning rate. This is a modest controlled study, not an exhaustive optimizer competition.</p>
+<p>One implementation detail matters for interpreting QAT: its biases remain continuous during training but are snapped for evaluation. The direct-grid methods quantize biases during training too. I therefore treat QAT as a <strong>provisional practical reference</strong>, not a perfectly matched comparison.</p>
+<h2>First result: basic GDMC really does learn</h2>
+<p>With no momentum, basic GDMC reaches <strong>89.21% final accuracy on MNIST at 4 bits</strong> and <strong>75.42% on Fashion-MNIST</strong>. At 8 bits, those figures rise to 94.26% and 84.73%.</p>
+<p>This answers the first research question at the scale tested: a neural network can learn through gradient-directed moves directly on a small set of weight values.</p>
+<figure><img src="assets/02_accuracy_by_precision.png" alt="Final accuracy across 2, 4, and 8 bits for basic GDMC, momentum GDMC, projected Adam, and provisional QAT, with FP32 Adam as a reference." loading="lazy"></figure>
+<p><em>Figure 1. Final accuracy after ten epochs. Error bars are 95% t-intervals across seeds. The dotted line is FP32 Adam; QAT is dashed because its training policy differs. Every precision uses the same vertical scale, so low-bit failures remain visible.</em></p>
+<p>The plot also shows why there is no single “GDMC result.” The basic and momentum variants behave very differently as the grid gets coarser.</p>
+<h2>At 4 bits, the training path tells the story</h2>
+<p>The clearest positive comparison is momentum GDMC against projected Adam at 4 bits.</p>
+<div class="table-wrap"><table><thead><tr><th>Task</th><th>Metric</th><th>Momentum GDMC</th><th>Projected Adam</th></tr></thead><tbody>
+<tr><td>MNIST</td><td>Peak observed accuracy</td><td>93.52%</td><td>91.70%</td></tr>
+<tr><td>MNIST</td><td>Final accuracy</td><td>93.35%</td><td>49.07%</td></tr>
+<tr><td>Fashion-MNIST</td><td>Peak observed accuracy</td><td>79.25%</td><td>75.28%</td></tr>
+<tr><td>Fashion-MNIST</td><td>Final accuracy</td><td>75.07%</td><td>55.89%</td></tr>
+</tbody></table></div>
+<p>The peak advantage is modest but consistent: <strong>1.81 percentage points on MNIST and 3.97 points on Fashion-MNIST</strong>, calculated before rounding the table values. Every reported seed favors momentum GDMC on both the peak and final metrics.</p>
+<p>The much larger final gap needs an explanation. Projected Adam often reaches a useful model and then deteriorates. GDMC retains more of its performance, although momentum GDMC also falls from its peak on Fashion-MNIST.</p>
+<figure><img src="assets/03_four_bit_learning.png" alt="Four-bit learning curves show basic and momentum GDMC alongside projected Adam on both tasks." loading="lazy"></figure>
+<p><em>Figure 2. Mean test accuracy at logged evaluations; shaded bands show 95% t-intervals across seeds. Curves connect measured checkpoints. The mean of individual runs&#x27; peaks need not equal the peak of the mean curve.</em></p>
+<p>This is evidence for <strong>better training stability under these tested settings</strong>. It is not proof that projected Adam must be unstable. Its learning rate is constant, and settings were selected using peak validation accuracy over four epochs before the ten-epoch runs. A longer tuning horizon and learning-rate decay could change the comparison.</p>
+<figure><img src="assets/04_paired_four_bit.png" alt="Paired four-bit accuracy differences, with one point per seed and confidence intervals for the mean difference." loading="lazy"></figure>
+<p><em>Figure 3. Pairing compares methods using the same seed. Dots show individual differences; diamonds and bars show the mean and its unadjusted 95% t-interval. Peak and final results use different horizontal scales. Positive values favor momentum GDMC.</em></p>
+<p>“Peak observed accuracy” means the highest logged test accuracy in each run. It is useful for describing these trajectories, but it is test-selected. A follow-up should choose checkpoints on validation data and evaluate them once on the test set.</p>
+<h2>The surprise: momentum can hurt badly</h2>
+<p>Momentum is often a sensible default. At 2 bits, it is the wrong default in these experiments.</p>
+<div class="table-wrap"><table><thead><tr><th>Task, 2-bit weights</th><th>Basic GDMC: final accuracy</th><th>Momentum GDMC: final accuracy</th></tr></thead><tbody>
+<tr><td>MNIST</td><td><strong>77.68%</strong></td><td>40.99%</td></tr>
+<tr><td>Fashion-MNIST</td><td><strong>55.66%</strong></td><td>29.23%</td></tr>
+</tbody></table></div>
+<p>At this precision there are only four levels, separated by about 0.667. A plausible explanation is that a direction averaged over past gradients can keep pushing after a large discrete move has changed the local situation. That is a hypothesis about the mechanism, not something this experiment isolates.</p>
+<p>The observation itself is clear: <strong>the basic method should not be dismissed.</strong> On Fashion-MNIST it even slightly exceeds momentum GDMC in final accuracy at 4 bits: 75.42% versus 75.07%.</p>
+<h2>At 8 bits, GDMC gets close to full precision</h2>
+<p>Momentum GDMC finishes at <strong>97.43% on MNIST</strong>, versus <strong>97.92% for FP32 Adam</strong>. On Fashion-MNIST it reaches <strong>87.51%</strong>, versus <strong>88.41%</strong>.</p>
+<p>Those are gaps of about 0.49 and 0.90 percentage points. They make direct low-bit optimization worth pursuing. They do not, by themselves, establish statistical equivalence or a universally negligible accuracy cost.</p>
+<p>The QAT reference remains stronger overall: its reported final accuracy is 97.70% at 4 bits on MNIST and 87.90% on Fashion-MNIST. Its bias-policy mismatch needs correction, but the present study certainly does not show GDMC beating every way of training a quantized model.</p>
+<p>The useful distinction is between <strong>optimizing weights directly on a grid</strong> and <strong>retaining continuous training weights behind a quantized forward pass</strong>. Both deserve comparison; they solve related but different training problems.</p>
+<h2>What the other experiments taught me</h2>
+<p>I also tested the idea that GDMC would tolerate noisy gradients better. The Gaussian-noise study did not support that expectation: at the strongest tested noise level, peak accuracy fell by roughly 2.43 points for 8-bit momentum GDMC, versus 0.48 points for FP32 Adam. This was a separate, three-seed MNIST experiment, not the same protocol as the main comparison.</p>
+<p>Turning acceptance off produced the same rounded accuracy results as the same-batch GDMC acceptance rule in that study. Acceptance was close to 100%. So the current evidence does <strong>not</strong> isolate a benefit from the Monte Carlo decision, even though the combined GDMC update is a working optimizer.</p>
+<p>The memory probe gives another qualified result. In separate CPU processes with a 21-million-parameter model, total peak memory was about 809 MiB for FP32 Adam, 672 MiB for momentum GDMC with sparse proposals, and 535 MiB for the custom 8-bit-state Adam baseline. Updating every weight with GDMC instead pushed its peak to about 1,470 MiB.</p>
+<p>These were three-step measurements, not training-to-convergence cost comparisons. All methods still stored weights as floating-point tensors. <strong>Restricting weights to low-bit values is not the same as packing them into low-bit storage.</strong> The latter—and any resulting GPU, runtime, or energy benefit—remains future work.</p>
+<p>The <a href="appendix.html">data and methods companion</a> includes the noise and memory plots, every primary result, confidence intervals, and the earlier experiments&#x27; provenance.</p>
+<h2>Where this leaves GDMC</h2>
+<p>The two research questions now have concrete, bounded answers.</p>
+<p><strong>Does basic GDMC work for deep learning?</strong> Yes, on these two small classification tasks: it learns useful models while moving directly among discrete weight values.</p>
+<p><strong>Can GDMC outperform other methods at the same low precision?</strong> Yes, in a specific comparison: momentum GDMC beats the tested projected Adam at 4 bits on both tasks. Its advantage is especially visible in how much performance survives to the end of training. At 2 bits, the basic variant is substantially stronger than the momentum variant. At 8 bits, momentum GDMC comes within roughly one percentage point of FP32 Adam.</p>
+<p>My next priorities are to strengthen the projected baselines, harmonize the QAT policy, test a convolutional network, and implement packed weight storage. I also want a more decisive acceptance ablation: one that determines when checking and rejecting a proposal actually helps.</p>
+<p>The most interesting result is that a discrete optimizer can learn at all—and that its best behavior changes with the number of choices each weight has. If low-bit weights are where we want to end up, designing learning rules around those choices deserves a closer look.</p>
+<hr>
+<p><em>Research scope: two 784–256–256–10 MLPs; ten training epochs; 10 MNIST seeds and 8 Fashion-MNIST seeds. This is an experimental report, not evidence of large-model speedups, universal optimizer superiority, or demonstrated noise resilience. Figures and tables were rebuilt from the saved run data.</em></p>
+<p><em>Further reading: <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC2776780/">original GDMC paper</a>, <a href="https://huxiangqian.medium.com/binarynets-how-binarized-neural-networks-differ-from-regular-neural-networks-with-toy-code-e5bdbd776606">my BinaryNets post</a>, and <a href="appendix.html">complete data and methods</a>.</em></p></article></body></html>
