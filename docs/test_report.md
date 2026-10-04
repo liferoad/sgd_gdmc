@@ -4,6 +4,16 @@
 **Generated from:** `results/raw/*.csv` (327 runs, all CSVs included)
 **Date:** 2026-10-03
 
+> **Corrections (2026-10-04).** This report predates the v3, Fashion-MNIST,
+> corrected-baseline and noise-study runs, so the 327-run count and the
+> hyperparameter table in §2.5 are stale. Three of its baseline settings were
+> also wrong: Adam used `lr=1e-2` for classification in the runs described
+> here (not 1e-3), and Projected-GD's `lr=1e-2` is below the grid spacing at
+> 2-4 bits, which froze that baseline. See
+> [fixes_2026-10-04.md](fixes_2026-10-04.md) and
+> [review_2026-10-04.md](review_2026-10-04.md) for details and corrected
+> numbers.
+
 This report is a single self-contained document that describes *what* was
 tested, *how* it was tested, and *what the numbers say*. It pulls together
 the v1 baseline (the original GDMC), the v2 extension (momentum +

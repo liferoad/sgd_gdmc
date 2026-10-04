@@ -98,5 +98,51 @@ Run the v2 sweep:
 
 ```bash
 .venv/bin/python experiments/06_gdmc_v2_sweep.py
+
+# Corrected baseline comparison (tuned Adam, grid-scaled Projected-GD,
+# 8-bit Adam, momentum-signSGD) - see docs/fixes_2026-10-04.md
+.venv/bin/python experiments/12_corrected_baselines.py
+
+# Measured peak-memory benchmark: FP32 Adam vs 8-bit Adam vs GDMC
+.venv/bin/python experiments/13_memory_benchmark.py
+
+# Gradient-noise study (validation quality vs proposal-gradient noise)
+.venv/bin/python experiments/14_noise_study.py
 ```
 
+## Tests
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest
+```
+
+The suite covers the grid invariants, the optimizer (including the regression
+that the proposal must actually change the weights at every bit-width, and that
+rejected moves roll back exactly), the 8-bit Adam baseline, the training loop /
+runner, and the aggregator.
+
+## Optimizer and runner options added 2026-10-04
+
+* GDMCOptimizer(accept_on="separate") plus step(closure, accept_closure):
+  evaluate the Metropolis test on a different minibatch
+  (TrainConfig.accept_split or accept_loader). The accept closure is
+  evaluated before AND after the proposal, in eval() mode with BatchNorm
+  buffers and the training mode restored, so the decision compares two
+  same-batch losses and rejected moves leave no side effects.
+* GDMCOptimizer(noise_rho=rho): norm-scaled Gaussian noise on the proposal
+  gradient only (the noise study's independent variable).
+* select_mode="bernoulli" (default) draws the move set with rand < move_frac,
+  avoiding a full int64 permutation; proposals and rollback are stored
+  sparsely (moved entries only).
+* GDMCOptimizer takes an explicit rng and no longer consumes the global RNG,
+  so runs with the same seed share a data order (common random numbers).
+* ProjectedGD(lr_scale=s) sets lr = s * grid spacing, so the baseline can no
+  longer be frozen by lr < delta.
+* New baselines: adam8bit (block-wise 8-bit optimizer state) and signsgd
+  (momentum signSGD).
+* RunResult now records delta_loss, num_moved, mean_acceptance_rate,
+  peak_rss_mb and rss_growth_mb; final_train_loss is populated.
+
+Known artifacts in results produced before 2026-10-04, and the corrected
+numbers, are documented in docs/fixes_2026-10-04.md.

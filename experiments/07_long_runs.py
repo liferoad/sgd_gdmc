@@ -73,6 +73,13 @@ def main():
         args.epochs_mlp = 1
         args.epochs_cnn = 1
         args.seeds = [0]
+        # Never clobber the full-run CSVs from a smoke test.
+        if "--out-mlp" not in sys.argv:
+            args.out_mlp = args.out_mlp.replace(".csv", "_quick.csv")
+        if "--out-cnn" not in sys.argv:
+            args.out_cnn = args.out_cnn.replace(".csv", "_quick.csv")
+        if "--out-v2" not in sys.argv:
+            args.out_v2 = args.out_v2.replace(".csv", "_quick.csv")
 
     print(f"Loading MNIST (full dataset)...")
     train_ds, test_ds = make_mnist(root="data")
@@ -102,7 +109,8 @@ def main():
     cfgs_mlp = []
     for bits in bits_list:
         for opt in ["sgd", "momentum", "adam", "sgld"]:
-            lr = 1e-2 if opt != "sgld" else 5e-4
+            # Adam needs 1e-3 here; 1e-2 leaves ~0.8 points on the table.
+            lr = (1e-3 if opt == "adam" else 1e-2) if opt != "sgld" else 5e-4
             beta = 10.0 if opt == "sgld" else 0.0
             cfgs_mlp.append((f"{opt}-b{bits}", opt, "none", bits, lr, beta, 0.0, 0.0, 1))
     for bits in bits_list:
@@ -142,6 +150,7 @@ def main():
                 log_every=2000,
                 beta1=beta1,
                 k=k,
+                project_lr_scale=0.5,
                 eval_grid_spec=grid if grid != "none" else None,
                 eval_bits=bits if grid != "none" else None,
             )
@@ -179,7 +188,8 @@ def main():
         cfgs_cnn = []
         for bits in bits_list_cnn:
             for opt in ["sgd", "momentum", "adam", "sgld"]:
-                lr = 1e-2 if opt != "sgld" else 5e-4
+                # Adam needs 1e-3 here; 1e-2 leaves ~0.8 points on the table.
+                lr = (1e-3 if opt == "adam" else 1e-2) if opt != "sgld" else 5e-4
                 beta = 10.0 if opt == "sgld" else 0.0
                 cfgs_cnn.append((f"{opt}-b{bits}", opt, "none", bits, lr, beta, 0.0, 0.0, 1))
         for bits in bits_list_cnn:
@@ -219,6 +229,7 @@ def main():
                     log_every=2000,
                     beta1=beta1,
                     k=k,
+                    project_lr_scale=0.5,
                     eval_grid_spec=grid if grid != "none" else None,
                     eval_bits=bits if grid != "none" else None,
                 )

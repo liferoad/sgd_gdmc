@@ -95,6 +95,7 @@ def main():
                 log_every=1000,
                 beta1=beta1,
                 k=k,
+                project_lr_scale=0.5,
                 eval_grid_spec=grid if grid != "none" else None,
                 eval_bits=bits if grid != "none" else None,
             )

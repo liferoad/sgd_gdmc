@@ -70,14 +70,14 @@ def main():
     cfgs = []
     for opt in ["sgd", "momentum", "adam", "sgld"]:
         cfgs.append((opt, "none", 32, dict(
-            lr=1e-2 if opt != "sgld" else 5e-4,
+            lr=(1e-3 if opt == "adam" else 1e-2) if opt != "sgld" else 5e-4,
             momentum=0.9 if opt == "momentum" else 0.0,
             beta=100.0 if opt == "sgld" else 0.0,
             move_frac=0.0)))
 
     for bits in args.bits_list:
         cfgs.append(("projected-gd", "uniform", bits, dict(
-            lr=1e-2, project_base="adam",
+            lr=1e-2, project_base="adam", project_lr_scale=0.5,
             momentum=0.0, beta=0.0, move_frac=0.0)))
 
     for bits in args.bits_list:
@@ -114,6 +114,7 @@ def main():
                 is_classification=True,
                 log_every=1000,
                 extra={"project_base": hp.get("project_base", "adam")},
+                project_lr_scale=hp.get("project_lr_scale"),
                 eval_grid_spec=grid_spec if grid_spec != "none" else None,
                 eval_bits=bits if grid_spec != "none" else None,
             )

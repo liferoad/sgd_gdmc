@@ -72,6 +72,9 @@ def main():
         args.epochs = 2
         args.seeds = [0]
         args.limit_train = 5000
+        # Never clobber the full-run CSV from a smoke test.
+        if "--out" not in sys.argv:
+            args.out = args.out.replace(".csv", "_quick.csv")
 
     train_ds, test_ds = make_mnist(root="data")
     if args.limit_train and len(train_ds) > args.limit_train:
@@ -138,6 +141,7 @@ def main():
                 k=k,
                 k_mode=kmode,
                 step_scale=ss,
+                project_lr_scale=0.5,
                 eval_grid_spec=grid if grid != "none" else None,
                 eval_bits=bits if grid != "none" else None,
                 curves_dir=curves_dir,

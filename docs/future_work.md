@@ -490,3 +490,38 @@ Practical guidance:
 The remaining gap is only at the 32-bit continuous limit, where plain
 Adam is ~0.8 points ahead. Everywhere else GDMC v3 with momentum is
 competitive with the best baseline.
+
+---
+
+## Status update — 2026-10-04 (review fixes)
+
+The 2026-10-04 review ([review_2026-10-04.md](review_2026-10-04.md),
+[fixes_2026-10-04.md](fixes_2026-10-04.md)) found that several ideas in this
+document were never implemented and that three headline comparisons were
+baseline artifacts. Status of the listed items:
+
+* **L2 / Fix 2.1 (momentum)** — shipped earlier (v2). It remains the one
+  robust algorithmic win, and the review's noise study confirms it is the
+  active ingredient, not the Metropolis step.
+* **L6 / Fix 6.1 (held-out Metropolis batch)** — **implemented**.
+  `GDMCOptimizer(accept_on="separate")` plus `TrainConfig.accept_split` /
+  `accept_loader`; `step(closure, accept_closure)`. The accept closure is
+  evaluated before and after the proposal (so both Metropolis losses come from
+  the same batch) in eval mode with BatchNorm statistics and the training mode
+  restored, so acceptance is deterministic and side-effect free. The old
+  `accept_on="full"` option, which was documented but never implemented, now
+  raises.
+* **L10 (better baselines)** — **implemented**: momentum-signSGD
+  (`src/baselines/signsgd.py`) and block-wise 8-bit Adam
+  (`src/baselines/adam8bit.py`) are now first-class baselines.
+* **L11 (snap on the fly)** — **implemented and extended**: proposals and
+  rollback are stored sparsely (moved entries only) and the move set is drawn
+  with `rand < move_frac` instead of a full `int64` `randperm`, so peak
+  per-step memory no longer scales with the whole parameter tensor.
+* **L12 (missing diagnostics)** — implemented: `delta_loss`, `num_moved`,
+  `accepted_step_size`, `mean_acceptance_rate` and `peak_rss_mb` are
+  recorded per run and per step.
+* **Not yet done**: packed persistent 4-bit weights (no full-precision master
+  copy). The memory work above is a storage optimisation of the *proposal*;
+  the weight representation is still float32. That remains the main item
+  standing between this code and the feedback's memory claim.
