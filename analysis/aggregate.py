@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -128,20 +129,42 @@ def _ci95(x):
 
 
 def headline_table(df, metric):
-    """Group by the full configuration and compute mean, std and 95% CI."""
+    """Group by the full configuration; statistics over independent seeds.
+
+    Every statistic is computed over one value per (configuration, seed).
+    Historical CSVs re-run the same configuration in more than one file, and
+    treating those rows as independent repetitions narrows the interval
+    silently (the old code reported count=3 while averaging 6 rows). If the
+    duplicates disagree, their mean is used and the disagreement is counted in
+    the conflicts column, so it stays visible.
+    """
     keys = [k for k in CONFIG_KEYS if k in df.columns]
-    grp = df.groupby(keys, dropna=False)[metric]
-    g = grp.agg(["mean", "std", "min", "max"]).reset_index()
-    # count = number of DISTINCT seeds, not rows.
-    if "seed" in df.columns:
-        counts = df.groupby(keys, dropna=False)["seed"].nunique()
-    else:
-        counts = grp.size()
-    # Same group order as the aggregation above, so assign positionally
-    # (merging on keys would break on NaN hyperparameter values).
-    g["count"] = counts.values
-    g["ci_lo"] = grp.apply(lambda s: _ci95(s)[0]).values
-    g["ci_hi"] = grp.apply(lambda s: _ci95(s)[1]).values
+    rows = []
+    for key_vals, sub in df.groupby(keys, dropna=False):
+        if not isinstance(key_vals, tuple):
+            key_vals = (key_vals,)
+        rec = dict(zip(keys, key_vals))
+        if "seed" in sub.columns:
+            per_seed = sub.groupby("seed", dropna=False)[metric]
+            values = np.asarray(per_seed.mean().values, float)
+            conflicts = int((per_seed.nunique() > 1).sum())
+            dropped = int(len(sub) - len(values))
+        else:
+            values = np.asarray(sub[metric].values, float)
+            conflicts = 0
+            dropped = 0
+        n = len(values)
+        lo, hi = _ci95(values)
+        rec.update(
+            mean=float(values.mean()) if n else float("nan"),
+            std=float(values.std(ddof=1)) if n > 1 else float("nan"),
+            min=float(values.min()) if n else float("nan"),
+            max=float(values.max()) if n else float("nan"),
+            count=n, conflicts=conflicts, duplicate_rows=dropped,
+            ci_lo=lo, ci_hi=hi,
+        )
+        rows.append(rec)
+    g = pd.DataFrame(rows)
     g["mean_std"] = g.apply(
         lambda r: (f"{r['mean']:.4f} ± {r['std']:.4f}" if r["count"] > 1
                    else f"{r['mean']:.4f}"), axis=1)
@@ -162,54 +185,121 @@ def _fmt_table(df, metric):
                         "epochs", "lr", "beta", "beta1", "k", "k_mode",
                         "step_scale", "project_lr_scale", "grad_noise_rho",
                         "accept_on", "mean_std", "ci95", "min", "max",
-                        "count"] if c in df.columns]
+                        "count", "conflicts"] if c in df.columns]
     out = df[cols].to_markdown(index=False, floatfmt=".4f")
     return out.replace("mean_std", f"mean_std ({metric})")
 
 
-def plot_loss_curves(df, task, out_path):
-    sub = df[df["task"] == task]
-    if sub.empty:
-        return
-    fig, ax = plt.subplots(figsize=(8, 5))
-    for (opt, grid), g in sub.groupby(["optimizer", "grid_spec"]):
-        g = g.sort_values("bits")
-        if g["bits"].nunique() < 2:
+# A "configuration family" fixes every setting except the bit-width, so each
+# plotted line corresponds to one real method configuration. Averaging over
+# beta / lr / noise settings (as the original plots did) produces lines that
+# represent no method at all.
+LINE_KEYS = [k for k in CONFIG_KEYS if k not in ("task", "model", "bits", "seed")]
+
+
+def _fmt_val(v):
+    if v is None:
+        return "n/a"
+    if isinstance(v, float) and math.isnan(v):
+        return "n/a"
+    if isinstance(v, float):
+        return f"{v:g}"
+    return str(v)
+
+
+def _config_families(df, x_field):
+    """Families that fix every setting except x_field and span >=2 values of it."""
+    keys = [k for k in LINE_KEYS if k in df.columns and k != x_field]
+    families = []
+    for key_vals, g in df.groupby(keys, dropna=False):
+        if not isinstance(key_vals, tuple):
+            key_vals = (key_vals,)
+        g = g.dropna(subset=[x_field]).sort_values(x_field)
+        if g[x_field].nunique() < 2:
             continue
-        agg = g.groupby("bits")["best_test_acc"].mean().reset_index()
-        ax.plot(agg["bits"], agg["best_test_acc"], "o-",
-                label=f"{opt}/{grid}", alpha=0.8)
-    ax.set_xlabel("Quantization bits")
-    ax.set_ylabel("Best test accuracy")
-    ax.set_title(f"{task}: best test accuracy vs quantization bits")
-    ax.set_xscale("log", base=2)
+        families.append((dict(zip(keys, key_vals)), g))
+    return keys, families
+
+
+def _varying_fields(families, keys):
+    return {f: len({_fmt_val(kv.get(f)) for kv, _ in families}) > 1 for f in keys}
+
+
+def _config_label(kv, varying, x_field):
+    base = f"{kv.get('optimizer', '?')}/{kv.get('grid_spec', '?')}"
+    extras = [f"{f}={_fmt_val(kv.get(f))}"
+              for f, is_var in varying.items()
+              if is_var and f not in ("optimizer", "grid_spec", x_field)]
+    return base + ((" " + " ".join(extras)) if extras else "")
+
+
+def _plot_generic(df, task, out_path, x_field, metric, ylabel, title,
+                  only_gdmc=False):
+    """One line per configuration family, varying x_field.
+
+    Averaging over beta / lr / noise settings (as the original plots did)
+    produces a line that represents no actual method, so every plotted line
+    here fixes all settings except x_field.
+    """
+    sub = df[df["task"] == task]
+    if only_gdmc:
+        sub = sub[sub["optimizer"].str.startswith("gdmc")]
+    if sub.empty or x_field not in sub.columns:
+        out_path.unlink(missing_ok=True)
+        return
+    keys, families = _config_families(sub, x_field)
+    if not families:
+        # Nothing to draw for this axis; remove any stale figure.
+        out_path.unlink(missing_ok=True)
+        return
+    varying = _varying_fields(families, keys)
+    fig, ax = plt.subplots(figsize=(9.5, 5.5))
+    for kv, g in families:
+        agg = g.groupby(x_field)[metric].mean()
+        ax.plot(agg.index.values, agg.values, "o-", alpha=0.85,
+                label=_config_label(kv, varying, x_field))
+    ax.set_xlabel(x_field.replace("_", " "))
+    ax.set_ylabel(ylabel)
+    ax.set_title(title + " (one line per configuration)")
+    if x_field == "bits":
+        ax.set_xscale("log", base=2)
+    if metric == "final_acceptance_rate":
+        ax.set_ylim(0, 1.05)
     ax.grid(True, alpha=0.3)
-    ax.legend(loc="lower right", fontsize=8)
+    ax.legend(loc="lower right" if metric != "final_acceptance_rate" else "best",
+              fontsize=6, ncol=2)
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
     plt.close(fig)
+
+
+def plot_loss_curves(df, task, out_path):
+    _plot_generic(df, task, out_path, "bits", "best_test_acc",
+                  "Best test accuracy",
+                  f"{task}: best test accuracy vs quantization bits")
 
 
 def plot_acceptance(df, task, out_path):
-    sub = df[(df["task"] == task) & (df["optimizer"].str.startswith("gdmc"))]
-    if sub.empty:
+    _plot_generic(df, task, out_path, "bits", "final_acceptance_rate",
+                  "Final acceptance rate (smoothed)",
+                  f"{task}: GDMC acceptance rate vs quantization bits",
+                  only_gdmc=True)
+
+
+# When bits does not vary but something else does (noise strength, learning
+# rate, step scale), emit a second figure for that axis.
+ALT_X_FIELDS = ["grad_noise_rho", "lr", "step_scale", "project_lr_scale"]
+
+
+def plot_alt_axis(df, task, plots_dir):
+    sub = df[df["task"] == task]
+    for xf in ALT_X_FIELDS:
+        if xf not in sub.columns or sub[xf].nunique(dropna=True) < 2:
+            continue
+        out = plots_dir / f"{task}_vs_{xf}.png"
+        _plot_generic(df, task, out, xf, "best_test_acc", "Best test accuracy",
+                      f"{task}: best test accuracy vs {xf}")
         return
-    fig, ax = plt.subplots(figsize=(7, 4))
-    for (opt, grid), g in sub.groupby(["optimizer", "grid_spec"]):
-        g = g.sort_values("bits")
-        agg = g.groupby("bits")["final_acceptance_rate"].mean().reset_index()
-        ax.plot(agg["bits"], agg["final_acceptance_rate"], "o-",
-                label=f"{opt}/{grid}", alpha=0.8)
-    ax.set_xlabel("Quantization bits")
-    ax.set_ylabel("Final acceptance rate (smoothed)")
-    ax.set_title(f"{task}: GDMC acceptance rate vs quantization bits")
-    ax.set_xscale("log", base=2)
-    ax.set_ylim(0, 1.05)
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="best", fontsize=8)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=120)
-    plt.close(fig)
 
 
 def write_report(df, out_path):
@@ -250,6 +340,11 @@ def main():
 
     tab = headline_table(df, "best_test_acc")
     tab.to_csv(out_dir / "headline_table.csv", index=False)
+    n_conf = int(tab["conflicts"].sum()) if "conflicts" in tab.columns else 0
+    if n_conf:
+        print(f"WARNING: {n_conf} (config, seed) records appear more than once "
+              f"with different results; their mean is used and the conflict is "
+              f"recorded in the conflicts column.")
     md = ["# Headline table - best test accuracy by full configuration\n",
           "mean ± std and 95% CI over seeds. count = number of seeds.\n",
           "Unquantized baselines are de-duplicated to one row per run.\n",
@@ -259,6 +354,7 @@ def main():
     for task in sorted(df["task"].unique()):
         plot_loss_curves(df, task, plots_dir / f"{task}_loss.png")
         plot_acceptance(df, task, plots_dir / f"{task}_acceptance.png")
+        plot_alt_axis(df, task, plots_dir)
 
     write_report(df, out_dir / "REPORT.md")
     print(f"Wrote headline table ({len(tab)} configs), plots, and REPORT.md")

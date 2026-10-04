@@ -73,10 +73,9 @@ class _Proposal:
     """Sparse description of one proposed move."""
 
     param: torch.Tensor
-    index: torch.Tensor          # int64 flat indices that move
-    old_values: torch.Tensor     # grid values at those indices before the move
-    new_values: torch.Tensor     # grid values after the move
-    step_sizes: torch.Tensor     # continuous displacement per moved entry
+    index: torch.Tensor          # int64 flat indices that were selected
+    old_values: torch.Tensor     # EXACT values at those indices before the move
+    new_values: torch.Tensor     # values after the move
 
 
 def _mean_abs(t: torch.Tensor, chunk: int = 1 << 20) -> float:
@@ -204,6 +203,7 @@ class GDMCOptimizer(torch.optim.Optimizer):
         self.last_acceptance_rate: float = 1.0
         self.last_mean_k: Optional[float] = None
         self.last_num_moved: int = 0
+        self.last_num_selected: int = 0
         self.last_accepted_step_size: float = 0.0
         self.step_count = 0
 
@@ -258,20 +258,23 @@ class GDMCOptimizer(torch.optim.Optimizer):
             return vmin, vmax, True
         return None, None, False
 
-    def _snap_inplace(self, p: torch.Tensor, grid: GridLike) -> None:
+    def _snap_inplace(self, p: torch.Tensor, grid: GridLike,
+                      vmin: Optional[float] = None,
+                      vmax: Optional[float] = None) -> None:
         """Snap p.data onto the grid **in place**, with no full-size temporary.
 
-        The range is captured once from the full tensor (range_for), so this is
-        correct for fixed, per-tensor and adaptive grids alike, and the chained
-        in-place ops avoid allocating a copy of the parameter.
+        Callers should pass the range captured once per step (see step), so the
+        same grid is used for the initial snap, the proposal and the rollback.
+        If no range is given it is derived from the current tensor.
         """
         levels = getattr(grid, "levels", 1)
         if levels == 1:
             p.data.zero_()
             return
-        vmin, vmax, ranged = self._grid_range(p, grid)
-        if not ranged:
-            vmin, vmax = float(grid.vmin), float(grid.vmax)
+        if vmin is None or vmax is None:
+            vmin, vmax, ranged = self._grid_range(p, grid)
+            if not ranged:
+                vmin, vmax = float(grid.vmin), float(grid.vmax)
         delta = (vmax - vmin) / (levels - 1)
         p.data.sub_(vmin).div_(delta).round_().clamp_(0, levels - 1)
         p.data.mul_(delta).add_(vmin)
@@ -295,8 +298,16 @@ class GDMCOptimizer(torch.optim.Optimizer):
             mask[j] = True
         return mask
 
-    def _build_proposal(self, p: torch.Tensor, grid: GridLike) -> Optional[_Proposal]:
-        """Construct (but do not apply) the sparse proposal for p."""
+    def _build_proposal(self, p: torch.Tensor, grid: GridLike,
+                        vmin: Optional[float] = None,
+                        vmax: Optional[float] = None,
+                        ranged: Optional[bool] = None) -> Optional[_Proposal]:
+        """Construct (but do not apply) the sparse proposal for p.
+
+        The grid range must be the one captured for this step; recomputing it
+        here would use a different adaptive range than the initial snap, so the
+        rollback values would not be the actual pre-proposal weights.
+        """
         group = self._group_for(p)
         move_frac = group["move_frac"]
         if move_frac <= 0.0 or p.numel() == 0 or p.grad is None:
@@ -317,7 +328,8 @@ class GDMCOptimizer(torch.optim.Optimizer):
         else:
             descent_dir = grad
 
-        vmin, vmax, ranged = self._grid_range(p, grid)
+        if vmin is None or ranged is None:
+            vmin, vmax, ranged = self._grid_range(p, grid)
         if ranged:
             delta = (vmax - vmin) / max(grid.levels - 1, 1)
         else:
@@ -330,11 +342,14 @@ class GDMCOptimizer(torch.optim.Optimizer):
         if idx.numel() == 0:
             return None
 
-        sub_w = flat_p[idx]
+        # The actual values the proposal starts from. These are also the
+        # rollback target: re-snapping them would silently move a rejected
+        # parameter.
+        old = flat_p[idx]
         if ranged:
-            sub_snap = grid.snap_with_range(sub_w, vmin, vmax)
+            sub_snap = grid.snap_with_range(old, vmin, vmax)
         else:
-            sub_snap = grid.snap(sub_w)
+            sub_snap = grid.snap(old)
 
         dir_sub = descent_dir.view(-1)[idx]
         sign = -torch.sign(dir_sub)
@@ -361,18 +376,14 @@ class GDMCOptimizer(torch.optim.Optimizer):
                 new = grid.step_multi_with_range(sub_snap, sign, k_moved, vmin, vmax)
             else:
                 new = grid.step_multi(sub_snap, sign, k_moved)
-            steps = k_moved * delta
         else:
             if ranged:
                 new = grid.step_with_range(sub_snap, sign, k=group["k"],
                                            vmin=vmin, vmax=vmax)
             else:
                 new = grid.step(sub_snap, sign, k=group["k"])
-            steps = torch.full_like(new, float(group["k"]) * delta)
 
-        old = sub_snap
-        return _Proposal(param=p, index=idx, old_values=old,
-                         new_values=new, step_sizes=steps)
+        return _Proposal(param=p, index=idx, old_values=old, new_values=new)
 
     def _apply(self, records: List[_Proposal]) -> None:
         for r in records:
@@ -419,11 +430,17 @@ class GDMCOptimizer(torch.optim.Optimizer):
         if accept_on == "separate" and accept_closure is None:
             raise ValueError("accept_on='separate' requires an accept_closure argument")
 
-        # 1. Snap current weights onto the grid, then compute loss/grad.
+        # 1. Capture each parameter's grid range ONCE, then snap in place.
+        #    For adaptive/per-tensor grids the range depends on the weights, so
+        #    re-deriving it later would use a different grid than the snap and
+        #    would corrupt the rollback values.
+        entries = []
         for group in self.param_groups:
             grid = group["grid"]
             for p in group["params"]:
-                self._snap_inplace(p, grid)
+                vmin, vmax, ranged = self._grid_range(p, grid)
+                entries.append((p, grid, vmin, vmax, ranged))
+                self._snap_inplace(p, grid, vmin, vmax)
 
         with torch.enable_grad():
             loss_tensor = closure()
@@ -440,15 +457,14 @@ class GDMCOptimizer(torch.optim.Optimizer):
         else:
             loss_old = grad_loss
 
-        # 3. Build the sparse proposals for every parameter.
+        # 3. Build the sparse proposals, using the ranges captured in step 1.
         records: List[_Proposal] = []
-        for group in self.param_groups:
-            for p in group["params"]:
-                if p.grad is None:
-                    continue
-                r = self._build_proposal(p, group["grid"])
-                if r is not None:
-                    records.append(r)
+        for p, grid, vmin, vmax, ranged in entries:
+            if p.grad is None:
+                continue
+            r = self._build_proposal(p, grid, vmin, vmax, ranged)
+            if r is not None:
+                records.append(r)
 
         # 4. Apply the candidate moves, then re-evaluate the acceptance loss.
         self._apply(records)
@@ -466,19 +482,25 @@ class GDMCOptimizer(torch.optim.Optimizer):
         if not accepted:
             self._rollback(records)
 
-        # 6. Diagnostics.
-        num_moved = int(sum(int(r.index.numel()) for r in records))
-        if records:
-            mean_step = float(torch.cat([r.step_sizes.reshape(-1)
-                                         for r in records]).mean().item())
+        # 6. Diagnostics. "moved" counts entries whose value actually changed
+        #    and the step size is the actual displacement, not the nominal
+        #    k * delta (at fine grids a nominal move can be a no-op in float32).
+        num_selected = int(sum(int(r.index.numel()) for r in records))
+        changed = [(r.new_values != r.old_values) for r in records]
+        num_moved = int(sum(int(c.sum().item()) for c in changed))
+        if num_moved:
+            disp = torch.cat([(r.new_values - r.old_values)[c]
+                              for r, c in zip(records, changed)]).abs()
+            mean_disp = float(disp.mean().item())
         else:
-            mean_step = 0.0
+            mean_disp = 0.0
         self.last_grad_loss = grad_loss
         self.last_loss_old = loss_old
         self.last_loss_new = loss_new
         self.last_accepted = bool(accepted)
+        self.last_num_selected = num_selected
         self.last_num_moved = num_moved
-        self.last_accepted_step_size = mean_step if accepted else 0.0
+        self.last_accepted_step_size = mean_disp if accepted else 0.0
         self.last_acceptance_rate = (0.9 * self.last_acceptance_rate
                                      + 0.1 * (1.0 if accepted else 0.0))
         self.step_count += 1

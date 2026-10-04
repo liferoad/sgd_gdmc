@@ -5,7 +5,8 @@ import numpy as np
 import pandas as pd
 
 from analysis.aggregate import (_dedup_unquantized, _expand_extra, _ci95,
-                                headline_table)
+                                _config_families, _config_label,
+                                _varying_fields, headline_table)
 
 
 def make_df(beta1s=(0.0, 0.9), k=1, task="t", opts=("gdmc",), bits=8):
@@ -83,6 +84,62 @@ def test_learning_rate_sweeps_are_not_pooled():
                              best_test_acc=0.98, epochs=10, batch_size=128))
     t = headline_table(_expand_extra(pd.DataFrame(rows)), "best_test_acc")
     assert len(t) == 2
+
+
+def _run(s, v, **over):
+    row = dict(task="t", model="m", optimizer="gdmc", grid_spec="uniform",
+               bits=8, seed=s, beta=2.0, beta1=0.9, k=1, epochs=2,
+               batch_size=128, best_test_acc=v)
+    row.update(over)
+    return row
+
+
+def test_ci_uses_one_value_per_seed():
+    """A run recorded twice must not count as two independent seeds."""
+    rows = [_run(s, v) for s, v in enumerate([0.8, 0.5, 0.6]) for _ in range(2)]
+    t = headline_table(_expand_extra(pd.DataFrame(rows)), "best_test_acc")
+    assert len(t) == 1
+    assert int(t["count"].iloc[0]) == 3
+    assert int(t["duplicate_rows"].iloc[0]) == 3
+    lo, hi = _ci95([0.8, 0.5, 0.6])
+    assert abs(float(t["ci_lo"].iloc[0]) - lo) < 1e-12
+    assert abs(float(t["ci_hi"].iloc[0]) - hi) < 1e-12
+
+
+def test_conflicting_duplicate_seeds_are_flagged():
+    rows = [_run(s, v) for s in (0, 1, 2) for v in (0.5, 0.9)]
+    t = headline_table(_expand_extra(pd.DataFrame(rows)), "best_test_acc")
+    assert int(t["count"].iloc[0]) == 3
+    assert int(t["conflicts"].iloc[0]) == 3
+
+
+def test_plot_families_keep_configurations_separate():
+    rows = []
+    for lr in (1e-3, 3e-3):
+        for bits in (4, 8):
+            for s in (0, 1, 2):
+                rows.append(dict(task="t", model="m", optimizer="adam",
+                                 grid_spec="none", bits=bits, seed=s, lr=lr,
+                                 epochs=10, batch_size=128,
+                                 best_test_acc=0.9 + 0.001 * bits + lr))
+    df = _expand_extra(pd.DataFrame(rows))
+    keys, families = _config_families(df, "bits")
+    # One family per learning rate; the old plot pooled both into one line.
+    assert len(families) == 2
+    varying = _varying_fields(families, keys)
+    labels = {_config_label(kv, varying, "bits") for kv, _ in families}
+    assert len(labels) == 2
+    assert all("lr=" in lab for lab in labels)
+
+
+def test_plot_families_require_two_x_values():
+    rows = [dict(task="t", model="m", optimizer="adam", grid_spec="none",
+                 bits=32, seed=s, lr=1e-3, epochs=10, batch_size=128,
+                 best_test_acc=0.9)
+            for s in (0, 1, 2)]
+    df = _expand_extra(pd.DataFrame(rows))
+    _, families = _config_families(df, "bits")
+    assert families == []
 
 
 def test_unquantized_baselines_are_deduplicated():

@@ -91,12 +91,15 @@ def _build_optimizer(name, params, cfg, grid):
     if name == "sgld":
         from .baselines.sgld import SGLD
         return SGLD(params, lr=cfg["lr"], beta=cfg.get("beta", 1.0), rng=rng)
-    if name in ("projected-gd", "projected_gd", "projectedgd"):
+    if name in ("projected-gd", "projected_gd", "projectedgd",
+                "projected-adam", "projected-momentum", "projected-msgd"):
         from .baselines.projected_gd import ProjectedGD
-        return ProjectedGD(params, base=cfg.get("project_base", "adam"),
-                           grid=grid, lr=cfg["lr"],
+        base = "momentum" if name in ("projected-momentum", "projected-msgd") \
+            else cfg.get("project_base", "adam")
+        return ProjectedGD(params, base=base, grid=grid, lr=cfg["lr"],
                            lr_scale=cfg.get("project_lr_scale"))
-    if name in ("gdmc", "gdmc-uniform", "gdmc-auto", "gdmc-v3"):
+    if name in ("gdmc", "gdmc-uniform", "gdmc-auto", "gdmc-v3",
+                "gdmc-v1", "gdmc-v2"):
         from .gdmc import GDMCOptimizer
         # "gdmc-auto" / "gdmc-v3" select the magnitude-scaled step mode.
         kmode = "auto" if name in ("gdmc-auto", "gdmc-v3") else cfg.get("k_mode", "fixed")

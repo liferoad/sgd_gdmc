@@ -1,8 +1,15 @@
 """Tests for GDMCOptimizer.
 
-The important regression here is test_proposal_changes_weights_at_every_bit_width:
-the original code silently produced bit-identical weights at 16/32 bits (the
-single grid step was below float32 precision) and nothing caught it.
+Two regressions matter most here:
+
+* the proposal must actually move *proposal* weights - comparing against the
+  unquantized initialization is not enough, because the initial snap alone can
+  make the comparison pass. Movement is therefore measured from the post-snap
+  state, and the fixed-step float32 no-op at 32 bits is tested separately from
+  the auto-k fix.
+* for adaptive/per-tensor grids the range must be captured once per step, so a
+  rejected move restores the exact pre-proposal weights instead of re-snapping
+  them on a different grid.
 """
 import pytest
 import torch
@@ -14,6 +21,13 @@ from src.gdmc import GDMCOptimizer, AdaptiveGrid, UniformGrid, make_grid
 def make_model(seed=0, dim=8):
     torch.manual_seed(seed)
     return nn.Sequential(nn.Linear(dim, dim), nn.ReLU(), nn.Linear(dim, 1))
+
+
+def make_linear(seed=0, dim=8):
+    """A single linear layer: every coordinate gets a non-zero gradient, so a
+    no-op proposal can only come from the grid arithmetic itself."""
+    torch.manual_seed(seed)
+    return nn.Linear(dim, 1)
 
 
 def make_data(n=16, d=8):
@@ -34,47 +48,148 @@ def total_change(model, before):
                for p, b in zip(model.parameters(), before))
 
 
-@pytest.mark.parametrize("bits", [2, 4, 8, 16, 32])
-def test_proposal_changes_weights_at_every_bit_width(bits):
-    model = make_model()
-    x, y = make_data()
-    crit = nn.MSELoss()
-    grid = UniformGrid(bits=bits)
-    opt = GDMCOptimizer(model.parameters(), grid=grid, beta=2.0, move_frac=0.1,
-                        rng=torch.Generator().manual_seed(0))
-    before = [p.data.clone() for p in model.parameters()]
+def step_capturing_post_snap(model, opt, closure, accept=True):
+    """Run one step and return each parameter's state right after the snap.
 
+    This is the state the proposal starts from; comparing against anything
+    earlier (e.g. the unquantized init) would count the snap itself as
+    movement.
+    """
+    captured = {}
+    orig_snap = opt._snap_inplace
+
+    def spy(p, grid, *a, **k):
+        orig_snap(p, grid, *a, **k)
+        captured[id(p)] = p.data.clone()
+
+    opt._snap_inplace = spy
+    if not accept:
+        opt._accept = lambda *a, **k: False
+    try:
+        opt.step(closure)
+    finally:
+        opt._snap_inplace = orig_snap
+    return captured
+
+
+def make_closure(opt, model, x, y, crit):
     def closure():
         opt.zero_grad(set_to_none=True)
         loss = crit(model(x), y)
         loss.backward()
         return loss
+    return closure
+
+
+def post_snap_change(model, captured):
+    return sum(float((p.data - captured[id(p)]).abs().sum().item())
+               for p in model.parameters())
+
+
+@pytest.mark.parametrize("bits", [2, 4, 8, 16])
+def test_fixed_step_proposal_actually_moves_weights(bits):
+    model = make_linear()
+    x, y = make_data()
+    crit = nn.MSELoss()
+    grid = UniformGrid(bits=bits)
+    opt = GDMCOptimizer(model.parameters(), grid=grid, beta=0.0, move_frac=0.5,
+                        k=1, rng=torch.Generator().manual_seed(0))
+    captured = step_capturing_post_snap(model, opt,
+                                        make_closure(opt, model, x, y, crit))
+    assert opt.last_num_selected > 0
+    assert post_snap_change(model, captured) > 0.0, "the proposal was a no-op"
+    assert opt.last_num_moved > 0
+    on_grid(model, grid)
+
+
+def test_fixed_step_k1_cannot_move_a_32_bit_grid():
+    """Documents the limitation v3 exists to fix: one 32-bit grid step
+    (4.7e-10) is below the float32 spacing at 0.5 (6e-8), so the proposal is a
+    no-op even though coordinates were selected."""
+    grid = UniformGrid(bits=32)
+    p = nn.Parameter(torch.full((8,), 0.5))
+    opt = GDMCOptimizer([p], grid=grid, beta=0.0, move_frac=1.0, k=1,
+                        rng=torch.Generator().manual_seed(0))
+    before = p.data.clone()
+
+    def closure():
+        opt.zero_grad(set_to_none=True)
+        p.grad = torch.ones_like(p)
+        return torch.tensor(1.0)
 
     opt.step(closure)
-    assert opt.last_num_moved > 0
-    assert total_change(model, before) > 0.0, "proposal was a no-op"
-    on_grid(model, grid)
+    assert torch.equal(p.data, before)
+    assert opt.last_num_selected == 8
+    assert opt.last_num_moved == 0, "diagnostics must count real changes"
 
 
 @pytest.mark.parametrize("bits", [16, 32])
 def test_auto_k_moves_at_fine_grids(bits):
-    model = make_model()
+    model = make_linear()
     x, y = make_data()
     crit = nn.MSELoss()
-    opt = GDMCOptimizer(model.parameters(), grid=UniformGrid(bits=bits), beta=2.0,
-                        move_frac=0.1, beta1=0.9, k_mode="auto", step_scale=1e-2,
+    opt = GDMCOptimizer(model.parameters(), grid=UniformGrid(bits=bits), beta=0.0,
+                        move_frac=0.5, beta1=0.9, k_mode="auto", step_scale=1e-2,
                         rng=torch.Generator().manual_seed(0))
-    before = [p.data.clone() for p in model.parameters()]
-
-    def closure():
-        opt.zero_grad(set_to_none=True)
-        loss = crit(model(x), y)
-        loss.backward()
-        return loss
-
-    opt.step(closure)
+    captured = step_capturing_post_snap(model, opt,
+                                        make_closure(opt, model, x, y, crit))
     assert opt.last_mean_k is not None and opt.last_mean_k >= 1.0
-    assert total_change(model, before) > 0.0
+    assert post_snap_change(model, captured) > 0.0
+
+
+def test_num_moved_counts_actual_changes_not_selections():
+    for bits in (4, 16, 32):
+        model = make_model()
+        x, y = make_data()
+        crit = nn.MSELoss()
+        opt = GDMCOptimizer(model.parameters(), grid=UniformGrid(bits=bits),
+                            beta=0.0, move_frac=0.5,
+                            rng=torch.Generator().manual_seed(0))
+        seen = {}
+        orig_apply = opt._apply
+
+        def spy_apply(records, _seen=seen, _orig=orig_apply):
+            _seen["records"] = records
+            _orig(records)
+
+        opt._apply = spy_apply
+        opt.step(make_closure(opt, model, x, y, crit))
+        records = seen["records"]
+        expected_moved = int(sum(int((r.new_values != r.old_values).sum())
+                                 for r in records))
+        expected_selected = int(sum(int(r.index.numel()) for r in records))
+        assert opt.last_num_moved == expected_moved, bits
+        assert opt.last_num_selected == expected_selected, bits
+        assert opt.last_num_moved <= opt.last_num_selected
+
+
+def test_rejected_adaptive_move_restores_exact_pre_proposal_weights():
+    """Regression: the adaptive range used to be recomputed after the snap, so
+    a rejected move re-snapped the weights onto a different grid."""
+    grid = AdaptiveGrid(bits=4, alpha=1.05)
+    original = torch.tensor([-0.63, -0.21, 0.21, 0.63])
+    p = nn.Parameter(original.clone())
+    opt = GDMCOptimizer([p], grid=grid, beta=2.0, move_frac=1.0, k=1,
+                        rng=torch.Generator().manual_seed(0))
+
+    captured = step_capturing_post_snap(
+        [p], opt,
+        lambda: (opt.zero_grad(set_to_none=True),
+                 setattr(p, "grad", torch.ones_like(p)),
+                 torch.tensor(1.0))[2],
+        accept=False)
+
+    after_snap = captured[id(p)]
+    # The snap legitimately moves the weights onto the adaptive grid ...
+    assert not torch.equal(after_snap, original)
+    # ... and the rejected move must restore exactly those values.
+    assert torch.equal(p.data, after_snap)
+    # The old (buggy) behaviour re-snapped on the range derived from the
+    # post-snap weights, which is a different grid.
+    vmin2, vmax2 = grid.range_for(after_snap)
+    wrong = grid.snap_with_range(after_snap, vmin2, vmax2)
+    assert not torch.equal(wrong, after_snap)
+    assert not torch.equal(p.data, wrong)
 
 
 def test_rejected_move_rolls_back_exactly():
