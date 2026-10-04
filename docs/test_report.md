@@ -13,6 +13,16 @@ end.
 
 ## Bottom line up front
 
+> **⚠️ Updated by the long runs.** The tables below come from the
+> *short* sweep (2-3 epochs on MNIST/CIFAR). A 30-epoch re-run on MNIST
+> MLP materially changes the picture: **GDMC v2 with momentum at 8-bit
+> (0.9775 ± 0.0005) matches or beats continuous Adam (0.9757 ± 0.0014)**, and
+> at 4-bit it is only 3.0 points behind Adam while being **4.3× better
+> than Projected-GD**. The 8-bit "GDMC loses to Projected-GD" row in the
+> tally below was an artifact of the 3-epoch budget. See
+> [`docs/long_runs.md`](long_runs.md) for the full long-run analysis and
+> `results/raw/long_runs_mlp.csv` for the data.
+
 **Each optimizer wins a different regime; "Adam is the best" is true at
 32 bits and false at ≤4 bits.** Across 22 (task, bits) cells (4 tasks
 × 6 bit-widths, minus the 2 CIFAR-10 cells we didn't run), the tally is:
