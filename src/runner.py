@@ -73,13 +73,20 @@ def _build_optimizer(name, params, cfg, grid):
     if name in ("projected-gd", "projected_gd", "projectedgd"):
         from .baselines.projected_gd import ProjectedGD
         return ProjectedGD(params, base=cfg.get("project_base", "adam"), grid=grid, lr=cfg["lr"])
-    if name in ("gdmc", "gdmc-uniform"):
+    if name in ("gdmc", "gdmc-uniform", "gdmc-auto", "gdmc-v3"):
         from .gdmc import GDMCOptimizer
+        # "gdmc-auto" / "gdmc-v3" select the magnitude-scaled step mode
+        # (k chosen so the continuous displacement reaches step_scale).
+        kmode = "auto" if name in ("gdmc-auto", "gdmc-v3") else cfg.get("k_mode", "fixed")
         return GDMCOptimizer(params, grid=grid,
                              beta=cfg.get("beta", 2.0),
                              move_frac=cfg.get("move_frac", 0.01),
                              beta1=cfg.get("beta1", 0.0),
-                             k=cfg.get("k", 1))
+                             k=cfg.get("k", 1),
+                             k_mode=kmode,
+                             step_scale=cfg.get("step_scale", 1e-3),
+                             k_max=cfg.get("k_max", 1 << 22),
+                             grad_ema=cfg.get("grad_ema", 0.99))
     if name in ("gdmc-adaptive",):
         from .gdmc import GDMCOptimizer, AdaptiveGrid, make_grid
         # ``gdmc-adaptive`` historically meant a per-tensor-uniform grid
@@ -90,7 +97,11 @@ def _build_optimizer(name, params, cfg, grid):
                              beta=cfg.get("beta", 2.0),
                              move_frac=cfg.get("move_frac", 0.01),
                              beta1=cfg.get("beta1", 0.0),
-                             k=cfg.get("k", 1))
+                             k=cfg.get("k", 1),
+                             k_mode=cfg.get("k_mode", "fixed"),
+                             step_scale=cfg.get("step_scale", 1e-3),
+                             k_max=cfg.get("k_max", 1 << 22),
+                             grad_ema=cfg.get("grad_ema", 0.99))
     raise ValueError(f"unknown optimizer: {name!r}")
 
 
@@ -136,6 +147,11 @@ def run_one(
     eval_bits=None,
     beta1=0.0,
     k=1,
+    k_mode="fixed",
+    step_scale=1e-3,
+    k_max=1 << 22,
+    grad_ema=0.99,
+    curves_dir=None,
 ):
     """Run a single (model, optimizer, grid, seed) configuration and return a result row.
 
@@ -155,7 +171,8 @@ def run_one(
     grid = _grid_for(grid_spec, bits) if grid_spec else None
     cfg = dict(lr=lr, momentum=momentum, beta=beta, move_frac=move_frac,
                project_base=(extra or {}).get("project_base", "adam"),
-               beta1=beta1, k=k)
+               beta1=beta1, k=k, k_mode=k_mode, step_scale=step_scale,
+               k_max=k_max, grad_ema=grad_ema)
     optimizer = _build_optimizer(optimizer_name, model.parameters(), cfg, grid)
 
     cfg_train = TrainConfig(epochs=epochs, log_every=log_every, device=device,
@@ -181,6 +198,21 @@ def run_one(
                     snap_fn=snap_fn)
     wall = time.time() - t0
 
+    # Optionally persist the full per-step curve for this run so that
+    # train/test loss trajectories can be plotted later.  The filename
+    # encodes the run config so a plotting script can glob and group.
+    if curves_dir is not None:
+        cdir = Path(curves_dir)
+        cdir.mkdir(parents=True, exist_ok=True)
+        fname = (f"{task}__{optimizer_name}__{grid_spec or 'none'}__b{bits}"
+                 f"__seed{seed}")
+        if beta1 or k != 1:
+            fname += f"__b1{beta1}__k{k}"
+        if k_mode == "auto":
+            fname += f"__auto__ss{step_scale:g}"
+        fname += ".csv"
+        write_curve_csv(records, cdir / fname)
+
     final = records[-1]
     test_losses = [r.test_loss for r in records if r.test_loss is not None]
     test_accs = [r.test_acc for r in records if r.test_acc is not None]
@@ -202,7 +234,8 @@ def run_one(
         move_frac=move_frac,
         beta1=beta1,
         k=k,
-        extra=json.dumps(extra or {}),
+        extra=json.dumps({**(extra or {}), "k_mode": k_mode,
+                          "step_scale": step_scale}),
         final_train_loss=float(final.loss) if not math.isnan(float(final.loss)) else float("nan"),
         final_test_loss=float(final.test_loss) if final.test_loss is not None else float("nan"),
         final_test_acc=float(final.test_acc) if final.test_acc is not None else float("nan"),
@@ -224,3 +257,56 @@ def write_results_csv(results, path):
         w.writeheader()
         for r in results:
             w.writerow(asdict(r))
+
+
+CURVE_FIELDS = ["step", "epoch", "loss", "test_loss", "test_acc",
+                "accepted", "acceptance_rate"]
+
+
+def write_curve_csv(records, path):
+    """Write the per-step training curve for a single run to a CSV.
+
+    Columns: step, epoch, loss (train, mini-batch), test_loss, test_acc,
+    accepted (last Metropolis decision), acceptance_rate (smoothed).
+    Test metrics are only populated on eval steps (every log_every).
+    """
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=CURVE_FIELDS)
+        w.writeheader()
+        for r in records:
+            w.writerow({k: getattr(r, k, "") for k in CURVE_FIELDS})
+
+
+def read_curves(curves_dir, pattern="*.csv"):
+    """Load all per-run curve CSVs in curves_dir into one DataFrame.
+
+    Parses the run config out of the filename (the format written by
+    run_one).  Requires pandas.
+    """
+    import pandas as pd
+    rows = []
+    for p in sorted(Path(curves_dir).glob(pattern)):
+        stem = p.stem
+        parts = stem.split("__")
+        meta = {"file": stem}
+        if len(parts) >= 5:
+            meta["task"] = parts[0]
+            meta["optimizer"] = parts[1]
+            meta["grid_spec"] = parts[2]
+            meta["bits"] = int(parts[3].lstrip("b"))
+            meta["seed"] = int(parts[4].lstrip("seed"))
+            for extra in parts[5:]:
+                if extra.startswith("b1"):
+                    meta["beta1"] = float(extra[2:])
+                elif extra.startswith("ss"):
+                    meta["step_scale"] = float(extra[2:])
+                elif extra.startswith("k"):
+                    meta["k"] = int(extra[1:])
+        df = pd.read_csv(p)
+        for k, v in meta.items():
+            df[k] = v
+        rows.append(df)
+    if not rows:
+        raise SystemExit(f"no curve CSVs in {curves_dir}")
+    return pd.concat(rows, ignore_index=True)

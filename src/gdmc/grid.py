@@ -128,6 +128,23 @@ class UniformGrid:
         idx = (idx + k * sign.to(idx.dtype)).clamp(0, self.levels - 1)
         return vmin + idx * delta
 
+    def step_multi(self, w: torch.Tensor, sign: torch.Tensor,
+                   k_vec: torch.Tensor) -> torch.Tensor:
+        """Vectorized multi-step: per-element step counts.
+
+        k_vec has the same shape as w and holds a non-negative number of
+        grid levels to move in the sign direction. Elements with k_vec=0
+        do not move. Used by the magnitude-scaled / auto step modes.
+        """
+        vmin, vmax = self._range(w)
+        snapped = self.snap(w)
+        if self.levels == 1:
+            return snapped
+        delta = (vmax - vmin) / (self.levels - 1)
+        idx = torch.round((snapped - vmin) / delta)
+        idx = (idx + k_vec.to(idx.dtype) * sign.to(idx.dtype)).clamp(0, self.levels - 1)
+        return vmin + idx * delta
+
     def values(self, w: torch.Tensor) -> torch.Tensor:
         """Return the discrete grid values for the given tensor shape."""
         vmin, vmax = self._range(w)
@@ -190,6 +207,11 @@ class AdaptiveGrid:
                              vmin: float, vmax: float) -> torch.Tensor:
         return self.step_with_range(w, sign, k=1, vmin=vmin, vmax=vmax)
 
+    def step(self, w: torch.Tensor, sign: torch.Tensor, k: int = 1) -> torch.Tensor:
+        """Auto-range scalar multi-step (mirrors UniformGrid.step)."""
+        vmin, vmax = self._range(w)
+        return self.step_with_range(w, sign, k=k, vmin=vmin, vmax=vmax)
+
     def step_with_range(self, w: torch.Tensor, sign: torch.Tensor,
                         k: int = 1, vmin: float | None = None,
                         vmax: float | None = None) -> torch.Tensor:
@@ -211,6 +233,24 @@ class AdaptiveGrid:
         idx = torch.round((snapped - vmin) / delta)
         idx = (idx + k * sign.to(idx.dtype)).clamp(0, self.levels - 1)
         return vmin + idx * delta
+
+    def step_multi_with_range(self, w: torch.Tensor, sign: torch.Tensor,
+                              k_vec: torch.Tensor, vmin: float,
+                              vmax: float) -> torch.Tensor:
+        """Vectorized multi-step with an explicit range (per-element k)."""
+        if self.levels == 1:
+            return self.snap_with_range(w, vmin, vmax)
+        snapped = self.snap_with_range(w, vmin, vmax)
+        delta = (vmax - vmin) / (self.levels - 1)
+        idx = torch.round((snapped - vmin) / delta)
+        idx = (idx + k_vec.to(idx.dtype) * sign.to(idx.dtype)).clamp(0, self.levels - 1)
+        return vmin + idx * delta
+
+    def step_multi(self, w: torch.Tensor, sign: torch.Tensor,
+                   k_vec: torch.Tensor) -> torch.Tensor:
+        """Auto-range vectorized multi-step."""
+        vmin, vmax = self._range(w)
+        return self.step_multi_with_range(w, sign, k_vec, vmin, vmax)
 
     # Backwards-compatible (auto-range) methods, used when the caller
     # doesn't need to keep the range consistent across a single step.

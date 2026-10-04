@@ -108,6 +108,10 @@ class GDMCOptimizer(torch.optim.Optimizer):
         accept_on: str = "minibatch",
         beta1: float = 0.0,
         k: int = 1,
+        k_mode: str = "fixed",
+        step_scale: float = 1e-3,
+        k_max: int = 1 << 22,
+        grad_ema: float = 0.99,
         rng: Optional[torch.Generator] = None,
     ) -> None:
         if grid is None:
@@ -124,6 +128,10 @@ class GDMCOptimizer(torch.optim.Optimizer):
             accept_on=accept_on,
             beta1=beta1,
             k=k,
+            k_mode=k_mode,
+            step_scale=step_scale,
+            k_max=k_max,
+            grad_ema=grad_ema,
         )
         super().__init__(params, defaults)
         self.rng = rng
@@ -134,6 +142,7 @@ class GDMCOptimizer(torch.optim.Optimizer):
         self.last_loss_new: Optional[float] = None
         self.last_accepted: Optional[bool] = None
         self.last_acceptance_rate: float = 1.0  # smoothed
+        self.last_mean_k: Optional[float] = None  # mean grid steps (auto mode)
         self.step_count = 0
 
     # ---- helpers ----
@@ -149,7 +158,9 @@ class GDMCOptimizer(torch.optim.Optimizer):
         return torch.randperm(numel, generator=self.rng, device="cpu")[:n]
 
     def _make_step(self, p: torch.Tensor, g: torch.Tensor, grid: GridLike,
-                   move_frac: float, beta1: float = 0.0, k: int = 1) -> torch.Tensor:
+                   move_frac: float, beta1: float = 0.0, k: int = 1,
+                   k_mode: str = "fixed", step_scale: float = 1e-3,
+                   k_max: int = 1 << 22, grad_ema: float = 0.99) -> torch.Tensor:
         """Return a candidate update to ``p`` of the same shape.
 
         ``beta1`` and ``k`` default to the v1 behaviour (no momentum,
@@ -193,6 +204,37 @@ class GDMCOptimizer(torch.optim.Optimizer):
             descent_dir = g
         # Sign of the descent direction: -1 for descent.
         sign = -torch.sign(descent_dir).to(p.dtype)
+
+        # Per-coordinate number of grid steps to take.
+        #   "fixed" -> every moved weight takes exactly `k` steps.
+        #   "auto"  -> choose k_i so the *continuous* displacement is
+        #              step_scale * |g_i| / g_ref, i.e. the grid step is
+        #              sized to match a target update magnitude.  This is
+        #              what escapes the fine-grid plateau: at 16/32 bits a
+        #              single grid step is far below float32 precision, but
+        #              a few hundred (or a few million) steps are not.
+        if k_mode == "auto":
+            state = self.state[p]
+            g_abs = descent_dir.detach().abs()
+            g_now = float(g_abs.mean().item())
+            gref = state.get("g_ref")
+            if gref is None:
+                gref = g_now if g_now > 0.0 else 1.0
+            else:
+                gref = grad_ema * float(gref) + (1.0 - grad_ema) * g_now
+            state["g_ref"] = gref
+            gref = max(gref, 1e-12)
+            if vmin is not None:
+                delta = (vmax - vmin) / max(grid.levels - 1, 1)
+            else:
+                vv_min, vv_max = grid._range(p.data)
+                delta = (vv_max - vv_min) / max(grid.levels - 1, 1)
+            k_vec = (step_scale * g_abs / gref / max(delta, 1e-30))
+            k_vec = k_vec.clamp(1.0, float(k_max)).round()
+            self.last_mean_k = float(k_vec.mean().item())
+        else:
+            k_vec = None
+
         # Pick the move-set indices (in this tensor's flat space).
         idx = self._select_indices(p.numel(), move_frac)
         flat_p = snapped.view(-1)
@@ -205,7 +247,13 @@ class GDMCOptimizer(torch.optim.Optimizer):
         flat_cand = candidate.view(-1)
         sub_w = flat_p[mask]
         sub_s = flat_sign[mask]
-        if vmin is not None:
+        if k_vec is not None:
+            sub_k = k_vec.view(-1)[mask]
+            if vmin is not None:
+                sub_new = grid.step_multi_with_range(sub_w, sub_s, sub_k, vmin, vmax)
+            else:
+                sub_new = grid.step_multi(sub_w, sub_s, sub_k)
+        elif vmin is not None:
             sub_new = step_fn(sub_w, sub_s, k=k, vmin=vmin, vmax=vmax)
         else:
             sub_new = step_fn(sub_w, sub_s, k=k)
@@ -270,12 +318,18 @@ class GDMCOptimizer(torch.optim.Optimizer):
             move_frac = group["move_frac"]
             beta1 = group["beta1"]
             k = group["k"]
+            k_mode = group["k_mode"]
+            step_scale = group["step_scale"]
+            k_max = group["k_max"]
+            grad_ema = group["grad_ema"]
             for p in group["params"]:
                 if p.grad is None:
                     continue
                 snap = self._snap(p, grid).clone()
                 delta = self._make_step(p, p.grad, grid, move_frac,
-                                        beta1=beta1, k=k)
+                                        beta1=beta1, k=k, k_mode=k_mode,
+                                        step_scale=step_scale, k_max=k_max,
+                                        grad_ema=grad_ema)
                 snapshots.append(snap)
                 deltas.append(delta)
                 params.append(p)
