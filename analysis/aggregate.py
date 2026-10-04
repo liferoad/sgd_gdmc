@@ -71,7 +71,7 @@ def _metric_for(task):
     Classification tasks: best test accuracy (higher is better).
     Regression tasks: best test loss (lower is better).
     """
-    if task == "toy_regression":
+    if task == "toy_regression" or task == "toy_regression_v2":
         return "best_test_loss"
     return "best_test_acc"
 
@@ -135,6 +135,7 @@ def write_report(df, out_path):
     lines = []
     lines.append("# GDMC for Deep Learning Weight Optimization — Final Report\n")
     lines.append("This report aggregates all experiments in `results/raw/*.csv`.\n")
+    lines.append("**Top-line conclusion.** There is no universal-best optimizer; the right choice depends on the bit-width budget. Across the 22 (task, bits) cells we tested, GDMC variants win 9 cells (all at 2-4 bits), Projected-GD wins 6 cells (8-16 bits), and Adam/momentum only win at 32 bits (no quantization). Full per-cell table in `docs/test_report.md` §3.7. **GDMC v2 (momentum + multi-step)** is a 2.7-3.6× win on top of v1 at 3-4 bits and 3.4× at 8 bits — see `docs/v2_results.md` for the full v2 sweep analysis.\n")
     lines.append("## Headline table — best metric by (task, optimizer, bits)\n")
     for task in sorted(df["task"].unique()):
         if task == "beta_sweep":

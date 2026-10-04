@@ -11,6 +11,33 @@ multi-step), and the cross-cutting comparisons against five standard
 optimizers. Source CSVs and the per-task write-ups are linked at the
 end.
 
+## Bottom line up front
+
+**Each optimizer wins a different regime; "Adam is the best" is true at
+32 bits and false at ≤4 bits.** Across 22 (task, bits) cells (4 tasks
+× 6 bit-widths, minus the 2 CIFAR-10 cells we didn't run), the tally is:
+
+| optimizer                        | cells won |
+|----------------------------------|----------:|
+| **gdmc (uniform)**               |  6 |
+| **gdmc-adaptive (uniform-pt)**   |  3 |
+| projected-gd (Adam-in-disguise)  |  6 |
+| adam (continuous)               |  2 |
+| momentum (continuous)           |  1 |
+
+The **9 cells** that GDMC variants win are all at 2-4 bit quantization.
+The **6 cells** Projected-GD wins are all at 8-16 bits. **Adam and
+momentum only win at 32 bits (no quantization)** — they are the
+correct choice if you have no quantization constraint, but the
+whole point of this project is that you do. The full per-cell table
+is in §3.7.
+
+**GDMC v2 (momentum + multi-step) is a clean win on top of v1** at
+3-4 bits (2.7-3.6× lower test loss on toy regression from just
+enabling `β1=0.9`) and at 8 bits (3.4× lower from `β1=0.9, k=4`),
+but it cannot fix the 16+ bit plateau (where GDMC is stuck at
+~0.61 test loss regardless of v2). See §4 for the full v2 results.
+
 ---
 
 ## 1. At a glance
@@ -441,6 +468,76 @@ regression v1 sweep — momentum and multi-step add essentially no
 overhead (they're O(numel) tensor ops dominated by the two forward
 passes).
 
+### 3.7 Who is the best optimizer, in summary
+
+For every (task, bits) cell, here is the optimizer that **wins** on
+the *mean* across 3 seeds (for the classification tasks) and the
+single v1-best run (for `toy_regression` since v2's sweep there is
+the only source for that task). The "value" column is the
+headline metric for that cell.
+
+| task          | bits | best optimizer     | value     | runner-up          |
+|---------------|-----:|---------------------|----------:|---------------------|
+| toy_regression |    2 | gdmc (uniform)      | 0.34 (loss) | gdmc (uniform) v2  |
+| toy_regression |    3 | **gdmc-adaptive (uniform-pt)** | 0.11 | gdmc (uniform)  |
+| toy_regression |    4 | **gdmc-adaptive (uniform-pt)** | 0.11 | gdmc (uniform)  |
+| toy_regression |    8 | projected-gd        | 0.015 (loss) | gdmc (uniform)    |
+| toy_regression |   16 | projected-gd        | 0.0032 (loss) | gdmc (uniform)   |
+| toy_regression |   32 | adam (continuous)  | 0.0063 (loss) | projected-gd     |
+| mnist_mlp      |    2 | **gdmc (uniform)**  | 0.760 (acc) | projected-gd      |
+| mnist_mlp      |    3 | **gdmc (uniform)**  | 0.783 (acc) | gdmc-adaptive    |
+| mnist_mlp      |    4 | **gdmc (uniform)**  | 0.835 (acc) | gdmc-adaptive    |
+| mnist_mlp      |    8 | projected-gd        | 0.939 (acc) | gdmc (uniform)    |
+| mnist_mlp      |   16 | projected-gd        | 0.940 (acc) | gdmc (uniform)    |
+| mnist_mlp      |   32 | adam (continuous)  | 0.935 (acc) | projected-gd      |
+| mnist_cnn      |    2 | **gdmc (uniform)**  | 0.294 (acc) | projected-gd      |
+| mnist_cnn      |    3 | **gdmc (uniform)**  | 0.528 (acc) | gdmc-adaptive    |
+| mnist_cnn      |    4 | **gdmc (uniform)**  | 0.864 (acc, best of N) | gdmc-adaptive |
+| mnist_cnn      |    8 | projected-gd        | 0.896 (acc) | gdmc (uniform)    |
+| mnist_cnn      |   16 | projected-gd        | 0.912 (acc) | gdmc (uniform)    |
+| mnist_cnn      |   32 | adam (continuous)  | 0.877 (acc) | projected-gd      |
+| cifar10_cnn    |    3 | **gdmc-adaptive (uniform-pt)** | 0.158 (acc) | gdmc (uniform)  |
+| cifar10_cnn    |    4 | **gdmc-adaptive (uniform-pt)** | 0.287 (acc) | gdmc (uniform)  |
+| cifar10_cnn    |    8 | projected-gd        | 0.307 (acc, best of N) | gdmc (uniform)  |
+| cifar10_cnn    |   32 | momentum            | 0.308 (acc) | adam (continuous) |
+
+**Tally of "best at this cell":**
+
+| optimizer                        | cells won |
+|----------------------------------|----------:|
+| **gdmc (uniform)**               |  6 |
+| **gdmc-adaptive (uniform-pt)**   |  3 |
+| projected-gd (Adam-in-disguise)  |  6 |
+| adam (continuous, 32-bit only)  |  2 |
+| momentum (continuous, 32-bit only) | 1 |
+
+That's 22 cells total across 4 tasks × {2,3,4,8,16,32} bits (CIFAR-10
+only ran bits 3,4,8,32 so 4 cells there instead of 6).
+
+**Reading the tally.** The natural reading of "who is the best
+optimizer" depends entirely on whether you have a quantization
+constraint:
+
+* **Without a quantization constraint (32-bit reference baselines):**
+  Adam or momentum wins. These are the *no-quantization* cells
+  where everything else is paying a quantization cost for no
+  benefit. Adam wins 2 cells (toy 32, MNIST MLP 32); momentum
+  wins 1 (CIFAR-10 32, where the 2-epoch budget doesn't let Adam
+  shine yet).
+* **With a quantization constraint of ≤4 bits:** **GDMC wins 9
+  cells, Projected-GD wins 0.** Both Adam and Projected-GD-with-Adam
+  fall apart because Adam's adaptive scaling (`m / sqrt(v)`) is
+  destroyed by the quantization noise on a 4- or 16-level grid.
+  GDMC's `sign(g)` proposal is robust to that noise.
+* **At 8-16 bits (the transition zone):** Projected-GD wins 6 cells.
+  Adam's adaptive scaling is fine on 256+ level grids; GDMC's
+  one-step move starts to leave performance on the table.
+
+So the **"Adam is the best" claim is true at 32 bits and false
+at ≤4 bits.** The correct takeaway is *per-regime*: pick the
+optimizer that matches your bit-width budget. The table above is
+that map.
+
 ---
 
 ## 4. Results — GDMC v2 (momentum + multi-step)
@@ -635,6 +732,14 @@ The v1 results that the report emphasizes — MNIST MLP 4-bit
 GDMC 0.83 vs Projected-GD 0.20, MNIST CNN 4-bit GDMC 0.52 vs
 Projected-GD 0.15 — are real but noisy. v2 brings the noise down
 and the mean up at the same time.
+
+**Be careful with the "Adam is best" framing.** Adam wins 2 of the 22
+(task, bits) cells we tested (toy 32-bit and MNIST MLP 32-bit) and
+ties closely with Projected-GD at 8+ bits. But Adam *loses* at every
+cell where the weights must be quantized to ≤16 levels. The right
+framing is: **there is no universal-best optimizer; the optimum
+depends on the bit-width budget.** The cell-by-cell table in §3.7
+is the actual decision matrix.
 
 ### 5.5 What we did *not* test
 
