@@ -35,6 +35,23 @@ end.
 > `results/raw/long_runs_mlp.csv` (117 runs),
 > `results/raw/long_runs_cnn_focused.csv` (21 runs), and
 > `results/raw/long_runs_cifar_focused.csv` (24 runs) for the data.
+>
+> **Further updated by GDMC v3 (magnitude-scaled steps).** A third
+> iteration removes the 16-32 bit plateau that v1/v2 were stuck on. The
+> cause was a step-size artefact: at 32 bits the grid spacing (4.7e-10)
+> is smaller than the float32 epsilon near 0.5 (6.0e-8), so one grid
+> step leaves the weights bit-identical. v3 sizes the step to a target
+> displacement. On MNIST MLP, 30 epochs, 3 seeds:
+>
+> | bits | gdmc v1 | gdmc v2 | **gdmc v3** | projected-gd | adam |
+> |---|---|---|---|---|---|
+> | 16 | 0.6414 | 0.7025 | **0.9770** | 0.9741 | N/A |
+> | 32 | 0.0896 | 0.0896 | **0.9750** | 0.9751 | 0.9832 |
+>
+> The same fix replicates on Fashion-MNIST (16-bit 0.59 -> 0.86,
+> 32-bit 0.10 -> 0.85). See
+> [docs/v3_auto_k.md](v3_auto_k.md) and
+> [docs/fashion_mnist.md](fashion_mnist.md).
 
 **Each optimizer wins a different regime; "Adam is the best" is true at
 32 bits and false at ≤4 bits.** Across 22 (task, bits) cells (4 tasks
