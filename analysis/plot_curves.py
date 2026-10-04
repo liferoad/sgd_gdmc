@@ -44,6 +44,19 @@ STYLE = {
 
 
 def _style(label):
+    """Colour/marker by optimizer, robust to the readable labels."""
+    if label.startswith("adam"):
+        return STYLE["adam"]
+    if label.startswith("projected-gd"):
+        return STYLE["projected-gd"]
+    if label.startswith("gdmc v3"):
+        return ("#17becf", "*")
+    if label.startswith("gdmc v2"):
+        return ("#d62728", "x")
+    if label.startswith("gdmc v1"):
+        return ("#d62728", "o")
+    if label.startswith("gdmc"):
+        return ("#9467bd", "P")
     for key, val in STYLE.items():
         if label.startswith(key):
             return val
@@ -51,11 +64,39 @@ def _style(label):
 
 
 def _variant(df):
-    """A unique config key within an optimizer, from file name extras."""
+    """A readable config label from the run filename extras.
+
+    Examples:
+        adam__none__b32            -> "adam (32-bit)"
+        gdmc__uniform__b4          -> "gdmc v1"
+        gdmc...__b10.9__k1         -> "gdmc v2 (mom)"
+        gdmc-auto...__auto__ss1e-3 -> "gdmc v3 (auto, ss=0.001)"
+    """
     def key(row):
+        opt = row["optimizer"]
         parts = row["file"].split("__")
         extras = parts[5:] if len(parts) > 5 else []
-        return row["optimizer"] + (" " + " ".join(extras) if extras else "")
+        beta1 = None
+        ss = None
+        auto = False
+        for e in extras:
+            if e.startswith("b1"):
+                beta1 = float(e[2:])
+            elif e.startswith("ss"):
+                ss = float(e[2:])
+            elif e == "auto":
+                auto = True
+        if opt == "adam":
+            return "adam (32-bit)"
+        if opt == "projected-gd":
+            return "projected-gd"
+        if opt.startswith("gdmc-auto") or auto:
+            return ("gdmc v3 (auto, ss=%g)" % ss) if ss is not None else "gdmc v3 (auto)"
+        if opt.startswith("gdmc-adaptive"):
+            return "gdmc (uniform-pt)"
+        if opt == "gdmc":
+            return "gdmc v2 (mom)" if (beta1 and beta1 > 0) else "gdmc v1"
+        return opt
     return df.apply(key, axis=1)
 
 

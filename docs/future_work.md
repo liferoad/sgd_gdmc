@@ -443,3 +443,50 @@ from momentum) *and* a continued win at 8+ bits (where the
 magnitude-scaled k is much larger than constant-4 for the
 high-`|g|` coordinates). This is the **GDMC v3** target.
 
+
+---
+
+## GDMC v3 — the magnitude-scaled k was built and it works
+
+The "GDMC v3 target" above has now been implemented and tested. See
+[v3_auto_k.md](v3_auto_k.md) for the full write-up.
+
+**Fix 1.1 (gradient-magnitude scaled k) — shipped, fixes the fine-grid plateau.**
+
+The implementation differs slightly from the sketch above. Rather than
+scaling k by |g| / EMA(|g|) (which normalises to ~1 on average and so
+does not help at fine grids), v3 uses the *grid spacing* to convert a
+target continuous displacement into a number of grid steps:
+
+    k_i = clip(round(step_scale * |g_i| / g_ref / delta), 1, k_max)
+
+This is the key insight: at 32 bits the grid spacing (4.7e-10) is
+smaller than the float32 epsilon near 0.5 (6e-8), so one grid step is
+not merely small, it is *unrepresentable* — the weights cannot move at
+all with k=1.
+
+Results on MNIST MLP (30 epochs, full 60K train, 3 seeds):
+
+| bits | v1 | v2 (momentum) | **v3 (auto k)** | projected-gd | adam |
+|------|----|----|----|----|----|
+| 4  | 0.9009 | **0.9519** | 0.9469 | 0.2180 | — |
+| 8  | 0.9620 | **0.9790** | 0.9785 | 0.9742 | — |
+| 16 | 0.6414 | 0.7025 | **0.9770** | 0.9741 | — |
+| 32 | 0.0896 | 0.0896 | **0.9750** | 0.9751 | 0.9832 |
+
+The plateau that v1 and v2 were stuck on (0.64 at 16 bits, 0.09 at
+32 bits) is gone. At 16 bits v3 beats Projected-GD; at 32 bits it
+matches it and comes within 0.8 points of continuous Adam.
+
+Practical guidance:
+
+* **<= 4 bits: use v2** (momentum, fixed k=1). v3 clips to k=1 here
+  too, but a handful of high-gradient coordinates round up to k=2,
+  which costs ~0.5 points at 4 bits.
+* **8 bits: v2 or v3** (they tie).
+* **>= 16 bits: use v3.**
+* step_scale = 1e-3 is a good default; 1e-2 is better at 32 bits.
+
+The remaining gap is only at the 32-bit continuous limit, where plain
+Adam is ~0.8 points ahead. Everywhere else GDMC v3 with momentum is
+competitive with the best baseline.
