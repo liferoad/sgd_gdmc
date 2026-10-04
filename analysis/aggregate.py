@@ -131,14 +131,31 @@ def plot_acceptance(df, task, out_path):
     plt.close(fig)
 
 
+LONG_RUN_TASKS = {"mnist_mlp_long", "mnist_cnn_long", "mnist_cnn_long_focused",
+                  "toy_regression_v2"}
+
+
 def write_report(df, out_path):
     lines = []
     lines.append("# GDMC for Deep Learning Weight Optimization — Final Report\n")
-    lines.append("This report aggregates all experiments in `results/raw/*.csv`.\n")
-    lines.append("**Top-line conclusion.** There is no universal-best optimizer; the right choice depends on the bit-width budget. Across the 22 (task, bits) cells we tested, GDMC variants win 9 cells (all at 2-4 bits), Projected-GD wins 6 cells (8-16 bits), and Adam/momentum only win at 32 bits (no quantization). Full per-cell table in `docs/test_report.md` §3.7. **GDMC v2 (momentum + multi-step)** is a 2.7-3.6× win on top of v1 at 3-4 bits and 3.4× at 8 bits — see `docs/v2_results.md` for the full v2 sweep analysis.\n")
+    lines.append("This report aggregates the *short* sweep in `results/raw/*.csv`.\n")
+    lines.append("## Top-line conclusion\n")
+    lines.append("There is no universal-best optimizer; the right choice depends on the bit-width budget.\n")
+    lines.append("**The long runs overturn the short-run picture at 8 bits.** A 30-epoch re-run on MNIST MLP (full 60K training set) gives:\n")
+    lines.append("| optimizer | bits | best test acc |")
+    lines.append("|---|---|---|")
+    lines.append("| adam (continuous) | 32 | 0.9757 ± 0.0014 |")
+    lines.append("| **gdmc v2 (β1=0.9, k=1)** | **8** | **0.9775 ± 0.0005** |")
+    lines.append("| gdmc v2 (β1=0.9, k=1) | 4 | 0.9460 ± 0.0017 |")
+    lines.append("| gdmc v1 | 8 | 0.9608 ± 0.0004 |")
+    lines.append("| gdmc v1 | 4 | 0.8959 ± 0.0021 |")
+    lines.append("| projected-gd | 4 | 0.2180 ± 0.0763 |")
+    lines.append("")
+    lines.append("**GDMC v2 at 8-bit matches/beats continuous Adam** (0.9775 vs 0.9757), and at 4-bit it is 3.0 points behind Adam while being 4.3× better than the QAT-style Projected-GD baseline. The short sweep below used only 2-3 epochs and understates GDMC substantially (GDMC 8-bit gains +0.186 from 3→30 epochs, the largest of any config). Full long-run analysis in `docs/long_runs.md`; per-cell best-optimizer tally in `docs/test_report.md` §3.7; v2 sweep in `docs/v2_results.md`.\n")
     lines.append("## Headline table — best metric by (task, optimizer, bits)\n")
+    lines.append("*(short sweep only; long-run tasks are excluded and reported in `docs/long_runs.md`)*\n")
     for task in sorted(df["task"].unique()):
-        if task == "beta_sweep":
+        if task == "beta_sweep" or task in LONG_RUN_TASKS:
             continue
         sub = df[df["task"] == task]
         if sub.empty:
@@ -177,10 +194,12 @@ def main():
     print(f"Optimizers: {sorted(df['optimizer'].unique())}")
     print(f"Bits: {sorted(df['bits'].unique())}")
 
-    tab = headline_table(df, "best_test_acc")
+    short_df = df[~df["task"].isin(LONG_RUN_TASKS)]
+    tab = headline_table(short_df, "best_test_acc")
     tab.to_csv(out_dir / "headline_table.csv", index=False)
     md = ["# Headline table — best test accuracy by (task, optimizer, bits)\n",
           "mean ± std over seeds. count = number of seeds.\n",
+          "Short sweep only; long-run tasks are reported in `docs/long_runs.md`.\n",
           _fmt_table(tab, "best_test_acc") + "\n"]
     (out_dir / "headline_table.md").write_text("\n".join(md))
 

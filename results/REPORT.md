@@ -1,10 +1,27 @@
 # GDMC for Deep Learning Weight Optimization — Final Report
 
-This report aggregates all experiments in `results/raw/*.csv`.
+This report aggregates the *short* sweep in `results/raw/*.csv`.
 
-**Top-line conclusion.** There is no universal-best optimizer; the right choice depends on the bit-width budget. Across the 22 (task, bits) cells we tested, GDMC variants win 9 cells (all at 2-4 bits), Projected-GD wins 6 cells (8-16 bits), and Adam/momentum only win at 32 bits (no quantization). Full per-cell table in `docs/test_report.md` §3.7. **GDMC v2 (momentum + multi-step)** is a 2.7-3.6× win on top of v1 at 3-4 bits and 3.4× at 8 bits — see `docs/v2_results.md` for the full v2 sweep analysis.
+## Top-line conclusion
+
+There is no universal-best optimizer; the right choice depends on the bit-width budget.
+
+**The long runs overturn the short-run picture at 8 bits.** A 30-epoch re-run on MNIST MLP (full 60K training set) gives:
+
+| optimizer | bits | best test acc |
+|---|---|---|
+| adam (continuous) | 32 | 0.9757 ± 0.0014 |
+| **gdmc v2 (β1=0.9, k=1)** | **8** | **0.9775 ± 0.0005** |
+| gdmc v2 (β1=0.9, k=1) | 4 | 0.9460 ± 0.0017 |
+| gdmc v1 | 8 | 0.9608 ± 0.0004 |
+| gdmc v1 | 4 | 0.8959 ± 0.0021 |
+| projected-gd | 4 | 0.2180 ± 0.0763 |
+
+**GDMC v2 at 8-bit matches/beats continuous Adam** (0.9775 vs 0.9757), and at 4-bit it is 3.0 points behind Adam while being 4.3× better than the QAT-style Projected-GD baseline. The short sweep below used only 2-3 epochs and understates GDMC substantially (GDMC 8-bit gains +0.186 from 3→30 epochs, the largest of any config). Full long-run analysis in `docs/long_runs.md`; per-cell best-optimizer tally in `docs/test_report.md` §3.7; v2 sweep in `docs/v2_results.md`.
 
 ## Headline table — best metric by (task, optimizer, bits)
+
+*(short sweep only; long-run tasks are excluded and reported in `docs/long_runs.md`)*
 
 ### cifar10_cnn  (metric: best_test_acc)
 
@@ -73,6 +90,14 @@ This report aggregates all experiments in `results/raw/*.csv`.
 | mnist_mlp | mlp_256x256 | sgld          | none        |     32 | 0.1110 ± 0.0049 | 0.1054 | 0.1144 |       3 |
 
 
+### mnist_mlp_long_v2  (metric: best_test_acc)
+
+| task              | model       | optimizer   | grid_spec   |   bits | mean_std (test_acc)        |    min |    max |   count |
+|:------------------|:------------|:------------|:------------|-------:|:----------------|-------:|-------:|--------:|
+| mnist_mlp_long_v2 | mlp_256x256 | gdmc        | uniform     |      4 | 0.8216 ± 0.1513 | 0.6022 | 0.9476 |       9 |
+| mnist_mlp_long_v2 | mlp_256x256 | gdmc        | uniform     |      8 | 0.9702 ± 0.0075 | 0.9604 | 0.9780 |       9 |
+
+
 ### toy_regression  (metric: best_test_loss)
 
 | task           | model     | optimizer     | grid_spec   |   bits | mean_std (test_loss)        |    min |     max |   count |
@@ -96,18 +121,6 @@ This report aggregates all experiments in `results/raw/*.csv`.
 | toy_regression | mlp_64x64 | projected-gd  | uniform     |     32 | 0.0100 ± 0.0071 | 0.0033 |  0.0175 |       3 |
 | toy_regression | mlp_64x64 | sgd           | none        |     32 | 0.1166 ± 0.0024 | 0.1143 |  0.1192 |       3 |
 | toy_regression | mlp_64x64 | sgld          | none        |     32 | 0.2858 ± 0.2300 | 0.1521 |  0.5514 |       3 |
-
-
-### toy_regression_v2  (metric: best_test_loss)
-
-| task              | model     | optimizer   | grid_spec   |   bits | mean_std (test_loss)        |    min |    max |   count |
-|:------------------|:----------|:------------|:------------|-------:|:----------------|-------:|-------:|--------:|
-| toy_regression_v2 | mlp_64x64 | gdmc        | uniform     |      2 | 1.5358 ± 1.1694 | 0.3356 | 3.2417 |      18 |
-| toy_regression_v2 | mlp_64x64 | gdmc        | uniform     |      3 | 0.3891 ± 0.1684 | 0.1192 | 0.6284 |      18 |
-| toy_regression_v2 | mlp_64x64 | gdmc        | uniform     |      4 | 0.2974 ± 0.1755 | 0.0595 | 0.5883 |      18 |
-| toy_regression_v2 | mlp_64x64 | gdmc        | uniform     |      8 | 0.0736 ± 0.0329 | 0.0144 | 0.1346 |      18 |
-| toy_regression_v2 | mlp_64x64 | gdmc        | uniform     |     16 | 0.5905 ± 0.0323 | 0.5307 | 0.6308 |      18 |
-| toy_regression_v2 | mlp_64x64 | gdmc        | uniform     |     32 | 0.6181 ± 0.0280 | 0.5798 | 0.6400 |      18 |
 
 
 ## Beta sweep (MNIST CNN, 4-bit)

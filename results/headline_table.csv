@@ -48,6 +48,8 @@ mnist_mlp,mlp_256x256,projected-gd,uniform,16,0.9389,0.003207802986469039,3,0.93
 mnist_mlp,mlp_256x256,projected-gd,uniform,32,0.9297666666666666,0.004441095960833611,3,0.9249,0.9336,0.9298 ± 0.0044
 mnist_mlp,mlp_256x256,sgd,none,32,0.38386666666666663,0.06996315697088955,3,0.3037,0.4326,0.3839 ± 0.0700
 mnist_mlp,mlp_256x256,sgld,none,32,0.11099999999999999,0.004886716689148252,3,0.1054,0.1144,0.1110 ± 0.0049
+mnist_mlp_long_v2,mlp_256x256,gdmc,uniform,4,0.8215888888888888,0.1512601107731682,9,0.6022,0.9476,0.8216 ± 0.1513
+mnist_mlp_long_v2,mlp_256x256,gdmc,uniform,8,0.9702444444444445,0.007454044390649787,9,0.9604,0.978,0.9702 ± 0.0075
 toy_regression,mlp_64x64,adam,none,32,0.0,0.0,3,0.0,0.0,0.0000 ± 0.0000
 toy_regression,mlp_64x64,gdmc,uniform,2,0.0,0.0,3,0.0,0.0,0.0000 ± 0.0000
 toy_regression,mlp_64x64,gdmc,uniform,3,0.0,0.0,3,0.0,0.0,0.0000 ± 0.0000
@@ -67,9 +69,3 @@ toy_regression,mlp_64x64,projected-gd,uniform,16,0.0,0.0,3,0.0,0.0,0.0000 ± 0.0
 toy_regression,mlp_64x64,projected-gd,uniform,32,0.0,0.0,3,0.0,0.0,0.0000 ± 0.0000
 toy_regression,mlp_64x64,sgd,none,32,0.0,0.0,3,0.0,0.0,0.0000 ± 0.0000
 toy_regression,mlp_64x64,sgld,none,32,0.0,0.0,3,0.0,0.0,0.0000 ± 0.0000
-toy_regression_v2,mlp_64x64,gdmc,uniform,2,0.0,0.0,18,0.0,0.0,0.0000 ± 0.0000
-toy_regression_v2,mlp_64x64,gdmc,uniform,3,0.0,0.0,18,0.0,0.0,0.0000 ± 0.0000
-toy_regression_v2,mlp_64x64,gdmc,uniform,4,0.0,0.0,18,0.0,0.0,0.0000 ± 0.0000
-toy_regression_v2,mlp_64x64,gdmc,uniform,8,0.0,0.0,18,0.0,0.0,0.0000 ± 0.0000
-toy_regression_v2,mlp_64x64,gdmc,uniform,16,0.0,0.0,18,0.0,0.0,0.0000 ± 0.0000
-toy_regression_v2,mlp_64x64,gdmc,uniform,32,0.0,0.0,18,0.0,0.0,0.0000 ± 0.0000

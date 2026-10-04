@@ -2,6 +2,8 @@
 
 mean ± std over seeds. count = number of seeds.
 
+Short sweep only; long-run tasks are reported in `docs/long_runs.md`.
+
 | task              | model        | optimizer     | grid_spec   |   bits | mean_std (test_acc)        |    min |    max |   count |
 |:------------------|:-------------|:--------------|:------------|-------:|:----------------|-------:|-------:|--------:|
 | cifar10_cnn       | smallcnn_b16 | adam          | none        |     32 | 0.2513 ± 0.0034 | 0.2481 | 0.2549 |       3 |
@@ -53,6 +55,8 @@ mean ± std over seeds. count = number of seeds.
 | mnist_mlp         | mlp_256x256  | projected-gd  | uniform     |     32 | 0.9298 ± 0.0044 | 0.9249 | 0.9336 |       3 |
 | mnist_mlp         | mlp_256x256  | sgd           | none        |     32 | 0.3839 ± 0.0700 | 0.3037 | 0.4326 |       3 |
 | mnist_mlp         | mlp_256x256  | sgld          | none        |     32 | 0.1110 ± 0.0049 | 0.1054 | 0.1144 |       3 |
+| mnist_mlp_long_v2 | mlp_256x256  | gdmc          | uniform     |      4 | 0.8216 ± 0.1513 | 0.6022 | 0.9476 |       9 |
+| mnist_mlp_long_v2 | mlp_256x256  | gdmc          | uniform     |      8 | 0.9702 ± 0.0075 | 0.9604 | 0.9780 |       9 |
 | toy_regression    | mlp_64x64    | adam          | none        |     32 | 0.0000 ± 0.0000 | 0.0000 | 0.0000 |       3 |
 | toy_regression    | mlp_64x64    | gdmc          | uniform     |      2 | 0.0000 ± 0.0000 | 0.0000 | 0.0000 |       3 |
 | toy_regression    | mlp_64x64    | gdmc          | uniform     |      3 | 0.0000 ± 0.0000 | 0.0000 | 0.0000 |       3 |
@@ -72,9 +76,3 @@ mean ± std over seeds. count = number of seeds.
 | toy_regression    | mlp_64x64    | projected-gd  | uniform     |     32 | 0.0000 ± 0.0000 | 0.0000 | 0.0000 |       3 |
 | toy_regression    | mlp_64x64    | sgd           | none        |     32 | 0.0000 ± 0.0000 | 0.0000 | 0.0000 |       3 |
 | toy_regression    | mlp_64x64    | sgld          | none        |     32 | 0.0000 ± 0.0000 | 0.0000 | 0.0000 |       3 |
-| toy_regression_v2 | mlp_64x64    | gdmc          | uniform     |      2 | 0.0000 ± 0.0000 | 0.0000 | 0.0000 |      18 |
-| toy_regression_v2 | mlp_64x64    | gdmc          | uniform     |      3 | 0.0000 ± 0.0000 | 0.0000 | 0.0000 |      18 |
-| toy_regression_v2 | mlp_64x64    | gdmc          | uniform     |      4 | 0.0000 ± 0.0000 | 0.0000 | 0.0000 |      18 |
-| toy_regression_v2 | mlp_64x64    | gdmc          | uniform     |      8 | 0.0000 ± 0.0000 | 0.0000 | 0.0000 |      18 |
-| toy_regression_v2 | mlp_64x64    | gdmc          | uniform     |     16 | 0.0000 ± 0.0000 | 0.0000 | 0.0000 |      18 |
-| toy_regression_v2 | mlp_64x64    | gdmc          | uniform     |     32 | 0.0000 ± 0.0000 | 0.0000 | 0.0000 |      18 |
