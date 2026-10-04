@@ -1,4 +1,4 @@
-# Long-run results — 30 epochs on MNIST MLP
+# Long-run results — 30 epochs (MNIST MLP) and 8 epochs (MNIST CNN)
 
 The v1 sweep in [`results/REPORT.md`](../results/REPORT.md) used a very
 short epoch budget on the classification tasks (MNIST MLP 3 epochs,
@@ -7,9 +7,20 @@ beats random (0.25 vs 0.10), so those numbers mostly measure "what
 happens in the first few thousand steps", not "how well can this
 optimizer train".
 
-This document reports the **30-epoch, full-60K-training-set** re-run of
-the MNIST MLP sweep, plus a GDMC v2 (momentum) ablation at the long
-horizon. It changes the headline conclusion materially.
+This document reports two long-horizon re-runs that **materially change
+the headline conclusion**:
+
+* **§1-6: MNIST MLP, 30 epochs, full 60K training set** — the complete
+  v1 sweep plus a GDMC v2 momentum ablation.
+* **§7: MNIST CNN, 8 epochs, 10K subset** — a focused comparison of
+  GDMC v1 / GDMC v2 momentum / Projected-GD at 4 and 8 bits.
+
+**Headline: GDMC v2 with momentum matches or beats continuous Adam at
+8 bits on both models** (MLP 0.9775 vs 0.9757; CNN 0.9668 vs 0.9546),
+and at 4 bits it is 4-5× better than the QAT-style Projected-GD
+baseline.
+
+### MNIST MLP setup
 
 * Script: [`experiments/07_long_runs.py`](../experiments/07_long_runs.py)
 * Raw data: `results/raw/long_runs_mlp.csv` (117 runs),
@@ -169,11 +180,6 @@ on the MNIST MLP grid, constant-`k` multi-step should not be used at
 
 **Not settled (needs more compute):**
 
-* **MNIST CNN** at a long horizon. The short-run 4-bit CNN result was
-  the noisiest number in the project (0.5180 ± 0.2193). A focused
-  re-run at 8 epochs is in flight
-  (`experiments/08_long_runs_cnn.py`, output
-  `results/raw/long_runs_cnn_focused.csv`).
 * **CIFAR-10** at a long horizon. The 2-epoch sweep is too short for
   any CIFAR-10 conclusion (Adam at 0.25 vs 0.10 random). A proper
   CIFAR-10 comparison needs ~20 epochs (≈ 8 h on this CPU).
@@ -181,3 +187,54 @@ on the MNIST MLP grid, constant-`k` multi-step should not be used at
   (`k_i ∝ |g_i| / EMA(|g|)`) is the proposed fix (see
   [`docs/future_work.md`](future_work.md), Fix 1.1) and has not been
   implemented.
+* **Momentum at 4-bit on MNIST CNN is unreliable** — see §7.
+
+---
+
+## 7. MNIST CNN focused long run (8 epochs)
+
+The short-run 4-bit MNIST CNN number was the noisiest in the project
+(0.5180 ± 0.2193, one seed at 0.18). This section re-runs the key
+comparison at 8 epochs on the 10K training subset.
+
+* Script: [`experiments/08_long_runs_cnn.py`](../experiments/08_long_runs_cnn.py)
+* Raw data: `results/raw/long_runs_cnn_focused.csv` (21 runs)
+* Setup: `SmallCNN` (3 conv blocks + 2 FC, base width 16), **8 epochs**,
+  10K training subset, batch 128, 3 seeds.
+
+### 7.1 Results
+
+| optimizer | bits | test acc (mean ± std) | per-seed |
+|-----------|-----:|----------------------:|----------|
+| adam (continuous) | 32 | 0.9546 ± 0.0177 | 0.9688 / 0.9602 / 0.9348 |
+| **gdmc v2 (β1=0.9, k=1)** | **8** | **0.9668 ± 0.0027** | 0.9669 / 0.9640 / 0.9694 |
+| gdmc v1 (β1=0.0, k=1) | 8 | 0.9357 ± 0.0152 | 0.9455 / 0.9181 / 0.9434 |
+| projected-gd | 8 | 0.9291 ± 0.0443 | 0.9220 / 0.9766 / 0.8888 |
+| gdmc v2 (β1=0.9, k=1) | 4 | 0.7807 ± 0.2154 | 0.9107 / 0.5320 / 0.8993 |
+| gdmc v1 (β1=0.0, k=1) | 4 | 0.7680 ± 0.1429 | 0.7288 / 0.6488 / 0.9264 |
+| projected-gd | 4 | 0.1503 ± 0.0454 | 0.1118 / 0.2003 / 0.1388 |
+
+### 7.2 Findings
+
+1. **GDMC v2 at 8-bit beats continuous Adam again** — 0.9668 ± 0.0027
+   vs Adam's 0.9546 ± 0.0177, a +1.2 point win with **6.5× tighter**
+   variance. This replicates the MNIST MLP result on a convolutional
+   model, so it is not an artifact of the MLP.
+2. **Momentum at 8-bit is a clean, consistent win**: v1 0.9357 →
+   v2 0.9668 (+3.1 points), and all three v2 seeds are within
+   0.005 of each other (std 0.0027).
+3. **At 4-bit, GDMC crushes Projected-GD by 5.1×** (0.774 vs 0.150).
+   Projected-GD is stuck at ~0.15 regardless of epochs — the same
+   Adam-on-a-coarse-grid failure.
+4. **Momentum at 4-bit on the CNN is unreliable.** v1 is 0.7680 ±
+   0.1429 and v2 is 0.7807 ± 0.2154 — higher mean but much wider
+   spread, with one v2 seed at 0.5320. Unlike the MLP (where
+   momentum was a consistent +5 points at 4-bit), the CNN at 4-bit
+   remains a high-variance regime where a single unlucky seed can
+   dominate the mean. **Recommendation: use momentum at 8-bit; at
+   4-bit seed-average over more than 3 seeds before trusting the
+   number.**
+5. The short-run 4-bit GDMC v1 number (0.5026 over 3 seeds, 2 epochs)
+   rises to 0.7680 at 8 epochs — confirming the short budget was
+   understating GDMC, while Projected-GD barely moves
+   (0.1523 → 0.1503).

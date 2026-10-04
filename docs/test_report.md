@@ -14,14 +14,22 @@ end.
 ## Bottom line up front
 
 > **⚠️ Updated by the long runs.** The tables below come from the
-> *short* sweep (2-3 epochs on MNIST/CIFAR). A 30-epoch re-run on MNIST
-> MLP materially changes the picture: **GDMC v2 with momentum at 8-bit
-> (0.9775 ± 0.0005) matches or beats continuous Adam (0.9757 ± 0.0014)**, and
-> at 4-bit it is only 3.0 points behind Adam while being **4.3× better
-> than Projected-GD**. The 8-bit "GDMC loses to Projected-GD" row in the
-> tally below was an artifact of the 3-epoch budget. See
-> [`docs/long_runs.md`](long_runs.md) for the full long-run analysis and
-> `results/raw/long_runs_mlp.csv` for the data.
+> *short* sweep (2-3 epochs on MNIST/CIFAR). Long-horizon re-runs
+> materially change the picture on **both** models:
+>
+> | model | long run | Adam (32-bit) | GDMC v2 @ 8-bit | GDMC v2 @ 4-bit | Projected-GD @ 4-bit |
+> |---|---|---|---|---|---|
+> | MNIST MLP | 30 epochs, 60K train | 0.9757 | **0.9775** | 0.9460 | 0.2180 |
+> | MNIST CNN | 8 epochs, 10K train  | 0.9546 | **0.9668** | 0.7807 | 0.1503 |
+>
+> **GDMC v2 with momentum matches or beats continuous Adam at 8-bit on
+> both models**, and at 4-bit it is **4.3-5.1× better than
+> Projected-GD**. The 8-bit "GDMC loses to Projected-GD" row in the
+> tally below was an artifact of the short epoch budget (GDMC 8-bit on
+> MNIST MLP gains +0.186 from 3→30 epochs, the largest of any config).
+> See [`docs/long_runs.md`](long_runs.md) for the full analysis,
+> `results/raw/long_runs_mlp.csv` (117 runs) and
+> `results/raw/long_runs_cnn_focused.csv` (21 runs) for the data.
 
 **Each optimizer wins a different regime; "Adam is the best" is true at
 32 bits and false at ≤4 bits.** Across 22 (task, bits) cells (4 tasks
